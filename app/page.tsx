@@ -19,6 +19,7 @@ type BrawlerClass = {
 
 type TierResult = {
   id: string;
+  user_id: string;
   username: string;
   player_tag: string;
   tier: string;
@@ -134,11 +135,9 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [selectedBrawler, setSelectedBrawler] = useState<Brawler | null>(null);
 
-  // ✅ Реальные данные тиров для бойца
   const [brawlerTiers, setBrawlerTiers] = useState<Record<string, TierResult[]>>({});
   const [brawlerTiersLoading, setBrawlerTiersLoading] = useState(false);
 
-  // ✅ Глобальный топ
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
@@ -165,7 +164,6 @@ export default function Home() {
       .catch(() => setLoading(false));
   }, [supabaseUrl, supabaseKey]);
 
-  // ✅ Загрузка реальных тиров когда выбираем бойца
   useEffect(() => {
     if (!selectedBrawler) return;
     loadBrawlerTiers(selectedBrawler.id);
@@ -176,11 +174,10 @@ export default function Home() {
 
     const { data } = await supabase
       .from('tier_results')
-      .select('id, username, player_tag, tier, points')
+      .select('id, user_id, username, player_tag, tier, points')
       .eq('brawler_id', brawlerId)
       .order('points', { ascending: false });
 
-    // Группируем по тиру
     const grouped: Record<string, TierResult[]> = {};
     TIER_DEFINITIONS.forEach(t => { grouped[t.id] = []; });
 
@@ -194,7 +191,6 @@ export default function Home() {
     setBrawlerTiersLoading(false);
   };
 
-  // ✅ Загрузка топа
   useEffect(() => {
     if (activeTab !== 'Overall') return;
     loadLeaderboard();
@@ -203,7 +199,6 @@ export default function Home() {
   const loadLeaderboard = async () => {
     setLeaderboardLoading(true);
 
-    // Берём все результаты из tier_results с иконками бойцов
     const { data: results } = await supabase
       .from('tier_results')
       .select('user_id, username, player_tag, tier, points, brawlers(name, icon_url)');
@@ -214,7 +209,6 @@ export default function Home() {
       return;
     }
 
-    // Группируем по user_id
     const userMap: Record<string, LeaderboardEntry> = {};
 
     results.forEach((r: any) => {
@@ -288,10 +282,16 @@ export default function Home() {
           Реальный скилл • Тиры от BRONZE до PRO • Overall топ
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center mt-12">
-          <Link href="/test" className="bg-orange-500 hover:bg-orange-600 text-white px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center">
+          <Link
+            href="/test"
+            className="bg-orange-500 hover:bg-orange-600 text-white px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center"
+          >
             Пройти тест
           </Link>
-          <Link href="/become-tester" className="border-2 border-white/30 hover:border-white/70 px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center">
+          <Link
+            href="/become-tester"
+            className="border-2 border-white/30 hover:border-white/70 px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center"
+          >
             Стать тестером
           </Link>
         </div>
@@ -346,7 +346,9 @@ export default function Home() {
                             className="w-7 h-7 object-contain drop-shadow-md"
                             onError={(e) => { e.currentTarget.style.display = 'none'; }}
                           />
-                          <span className="font-bold text-lg drop-shadow-md tracking-wider">{tier.label}</span>
+                          <span className="font-bold text-lg drop-shadow-md tracking-wider">
+                            {tier.label}
+                          </span>
                         </div>
                         <span className="text-xs font-medium text-white/70 bg-black/20 px-2 py-0.5 rounded-full">
                           {players.length}
@@ -369,13 +371,14 @@ export default function Home() {
                                 🎮
                               </div>
                               <div className="flex-1 min-w-0">
-<Link
-  href={`/user/${player.id}`}
-  className="font-medium text-sm text-gray-200 truncate hover:text-orange-400 transition"
->
-  {player.username}
-</Link>
-<div className="text-xs text-gray-500 truncate">{player.player_tag}</div>
+                                {/* ✅ user_id для правильной ссылки */}
+                                <Link
+                                  href={`/user/${player.user_id}`}
+                                  className="font-medium text-sm text-gray-200 truncate hover:text-orange-400 transition block"
+                                >
+                                  {player.username}
+                                </Link>
+                                <div className="text-xs text-gray-500 truncate">{player.player_tag}</div>
                               </div>
                             </div>
                           ))
@@ -410,7 +413,12 @@ export default function Home() {
                     activeTab === 'Overall' ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'
                   }`}
                 >
-                  <img src="/icons/classes/top.png" alt="TOP" className="w-6 h-6 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                  <img
+                    src="/icons/classes/top.png"
+                    alt="TOP"
+                    className="w-6 h-6 object-contain"
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  />
                   TOP
                 </button>
                 {CLASSES.map((cls) => (
@@ -421,7 +429,12 @@ export default function Home() {
                       activeTab === cls.id ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'
                     }`}
                   >
-                    <img src={cls.icon} alt={cls.label} className="w-5 h-5 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                    <img
+                      src={cls.icon}
+                      alt={cls.label}
+                      className="w-5 h-5 object-contain"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
                     {cls.label}
                   </button>
                 ))}
@@ -432,7 +445,10 @@ export default function Home() {
                 <div className="p-6">
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl font-black">🏆 TOP 100 игроков</h2>
-                    <button onClick={loadLeaderboard} className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm transition">
+                    <button
+                      onClick={loadLeaderboard}
+                      className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm transition"
+                    >
                       🔄 Обновить
                     </button>
                   </div>
@@ -458,54 +474,60 @@ export default function Home() {
                             key={entry.user_id}
                             className="bg-[#1a1a1a] hover:bg-[#222] rounded-2xl p-4 flex items-center gap-4 transition-all border border-white/5 hover:border-white/10"
                           >
-{/* Номер */}
-<div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0 ${getRankStyle(rank)}`}>
-  {rank}
-</div>
+                            {/* Номер */}
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0 ${getRankStyle(rank)}`}>
+                              {rank}
+                            </div>
 
-{/* Аватар */}
-<div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center flex-shrink-0 text-xl">
-  🎮
-</div>
+                            {/* Аватар */}
+                            <div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center flex-shrink-0 text-xl">
+                              🎮
+                            </div>
 
-{/* Ник + тег слева, очки справа */}
-<div className="flex items-center gap-6 flex-shrink-0 min-w-[280px]">
-  {/* Ник и тег */}
-  <div>
-<Link
-  href={`/user/${entry.user_id}`}
-  className="font-bold text-base leading-tight hover:text-orange-400 transition"
->
-  {entry.username}
-</Link>
-    <div className="text-xs text-gray-500 mt-0.5">{entry.player_tag}</div>
-  </div>
+                            {/* Ник + тег + очки */}
+                            <div className="flex items-center gap-6 flex-shrink-0 min-w-[280px]">
+                              <div>
+                                {/* ✅ Кликабельный ник */}
+                                <Link
+                                  href={`/user/${entry.user_id}`}
+                                  className="font-bold text-base leading-tight hover:text-orange-400 transition block"
+                                >
+                                  {entry.username}
+                                </Link>
+                                <div className="text-xs text-gray-500 mt-0.5">{entry.player_tag}</div>
+                              </div>
 
-  {/* Очки */}
-  <div className="flex items-center gap-1.5">
-    <img
-      src="/icons/points.png"
-      alt="points"
-      className="w-5 h-5 object-contain"
-      onError={(e) => { e.currentTarget.style.display = 'none'; }}
-    />
-    <div>
-      <span className="text-orange-400 font-black text-lg leading-none">{entry.total_points}</span>
-      <div className="text-[10px] text-gray-500 font-medium tracking-wider uppercase">очков</div>
-    </div>
-  </div>
-</div>
+                              {/* Очки */}
+                              <div className="flex items-center gap-1.5">
+                                <img
+                                  src="/icons/points.png"
+                                  alt="points"
+                                  className="w-5 h-5 object-contain"
+                                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                />
+                                <div>
+                                  <span className="text-orange-400 font-black text-lg leading-none">
+                                    {entry.total_points}
+                                  </span>
+                                  <div className="text-[10px] text-gray-500 font-medium tracking-wider uppercase">
+                                    очков
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
 
-{/* Топ 5 тиров — справа */}
-<div className="flex items-center gap-2 flex-1 justify-end">
-  {entry.best_tiers.slice(0, 5).map((bt, i) => (
+                            {/* Топ 5 тиров */}
+                            <div className="flex items-center gap-2 flex-1 justify-end">
+                              {entry.best_tiers.slice(0, 5).map((bt, i) => (
                                 <div key={i} className="flex flex-col items-center gap-1 flex-shrink-0">
                                   <div className="w-9 h-9 rounded-lg overflow-hidden bg-black/40 border border-white/10">
                                     <img
                                       src={bt.brawler_icon || `https://via.placeholder.com/36/1f2937/9ca3af?text=?`}
                                       alt={bt.brawler_name}
                                       className="w-full h-full object-cover"
-                                      onError={(e) => { e.currentTarget.src = `https://via.placeholder.com/36/1f2937/9ca3af?text=?`; }}
+                                      onError={(e) => {
+                                        e.currentTarget.src = `https://via.placeholder.com/36/1f2937/9ca3af?text=?`;
+                                      }}
                                     />
                                   </div>
                                   <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md leading-none ${TIER_BADGE[bt.tier] || 'bg-gray-600 text-white'}`}>
@@ -513,8 +535,10 @@ export default function Home() {
                                   </span>
                                 </div>
                               ))}
-                              {entry.best_tiers.length > 8 && (
-                                <div className="text-xs text-gray-500 flex-shrink-0">+{entry.best_tiers.length - 8}</div>
+                              {entry.best_tiers.length > 5 && (
+                                <div className="text-xs text-gray-500 flex-shrink-0">
+                                  +{entry.best_tiers.length - 5}
+                                </div>
                               )}
                             </div>
                           </div>
@@ -533,7 +557,9 @@ export default function Home() {
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                       {filteredBrawlers.map((brawler) => {
-                        const iconUrl = brawler.icon_url || `https://via.placeholder.com/150/1f2937/9ca3af?text=${brawler.name.slice(0, 2)}`;
+                        const iconUrl =
+                          brawler.icon_url ||
+                          `https://via.placeholder.com/150/1f2937/9ca3af?text=${brawler.name.slice(0, 2)}`;
                         return (
                           <div
                             key={brawler.id}
@@ -545,7 +571,9 @@ export default function Home() {
                                 src={iconUrl}
                                 alt={brawler.name}
                                 className="w-full h-full object-cover"
-                                onError={(e) => { e.currentTarget.src = `https://via.placeholder.com/150/1f2937/9ca3af?text=${brawler.name.slice(0, 2)}`; }}
+                                onError={(e) => {
+                                  e.currentTarget.src = `https://via.placeholder.com/150/1f2937/9ca3af?text=${brawler.name.slice(0, 2)}`;
+                                }}
                               />
                             </div>
                             <div className="font-semibold text-lg">{brawler.name}</div>
@@ -555,6 +583,7 @@ export default function Home() {
                       })}
                     </div>
                   )}
+
                   {!loading && filteredBrawlers.length === 0 && (
                     <p className="text-center py-20 text-gray-400">Ничего не найдено</p>
                   )}
