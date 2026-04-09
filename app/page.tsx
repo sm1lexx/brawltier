@@ -369,8 +369,13 @@ export default function Home() {
                                 🎮
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="font-medium text-sm text-gray-200 truncate">{player.username}</div>
-                                <div className="text-xs text-gray-500 truncate">{player.player_tag}</div>
+<Link
+  href={`/user/${player.id}`}
+  className="font-medium text-sm text-gray-200 truncate hover:text-orange-400 transition"
+>
+  {player.username}
+</Link>
+<div className="text-xs text-gray-500 truncate">{player.player_tag}</div>
                               </div>
                             </div>
                           ))
@@ -467,7 +472,12 @@ export default function Home() {
 <div className="flex items-center gap-6 flex-shrink-0 min-w-[280px]">
   {/* Ник и тег */}
   <div>
-    <div className="font-bold text-base leading-tight">{entry.username}</div>
+<Link
+  href={`/user/${entry.user_id}`}
+  className="font-bold text-base leading-tight hover:text-orange-400 transition"
+>
+  {entry.username}
+</Link>
     <div className="text-xs text-gray-500 mt-0.5">{entry.player_tag}</div>
   </div>
 
