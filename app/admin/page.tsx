@@ -65,8 +65,8 @@ export default function AdminPage() {
   const approve = async (app: Application) => {
     setProcessing(app.id);
 
-    // Обновляем заявку
-    await supabase
+    // 1. Обновляем заявку
+    const { error: appError } = await supabase
       .from('tester_applications')
       .update({
         status: 'approved',
@@ -75,12 +75,28 @@ export default function AdminPage() {
       })
       .eq('id', app.id);
 
-    // Даём роль тестера
-    await supabase
+    if (appError) {
+      alert('Ошибка обновления заявки: ' + appError.message);
+      setProcessing(null);
+      return;
+    }
+
+    // 2. Выдаём роль тестера
+    const { error: profileError } = await supabase
       .from('profiles')
-      .update({ is_tester: true, tester_status: 'approved' })
+      .update({
+        is_tester: true,
+        tester_status: 'approved',
+      })
       .eq('id', app.user_id);
 
+    if (profileError) {
+      alert('Ошибка выдачи роли: ' + profileError.message);
+      setProcessing(null);
+      return;
+    }
+
+    alert(`✅ ${app.username} теперь тестер!`);
     await loadApplications();
     setProcessing(null);
   };
@@ -88,7 +104,7 @@ export default function AdminPage() {
   const reject = async (app: Application) => {
     setProcessing(app.id);
 
-    await supabase
+    const { error } = await supabase
       .from('tester_applications')
       .update({
         status: 'rejected',
@@ -97,11 +113,18 @@ export default function AdminPage() {
       })
       .eq('id', app.id);
 
+    if (error) {
+      alert('Ошибка: ' + error.message);
+      setProcessing(null);
+      return;
+    }
+
     await supabase
       .from('profiles')
       .update({ tester_status: 'rejected' })
       .eq('id', app.user_id);
 
+    alert(`❌ Заявка ${app.username} отклонена`);
     await loadApplications();
     setProcessing(null);
   };
@@ -135,7 +158,9 @@ export default function AdminPage() {
             <h1 className="text-4xl font-black">Панель администратора</h1>
             <p className="text-gray-400 mt-1">
               <span className="text-red-400 font-bold">{profile?.username}</span>
-              <span className="ml-2 text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">👑 ADMIN</span>
+              <span className="ml-2 text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">
+                👑 ADMIN
+              </span>
             </p>
           </div>
           <div className="text-right text-sm text-gray-400">
@@ -148,19 +173,31 @@ export default function AdminPage() {
         <div className="flex gap-2 mb-6 bg-[#111111] p-1.5 rounded-2xl border border-white/10 w-fit">
           <button
             onClick={() => setActiveFilter('pending')}
-            className={`px-5 py-2.5 rounded-xl font-medium text-sm transition ${activeFilter === 'pending' ? 'bg-yellow-500 text-black' : 'text-gray-400 hover:text-white'}`}
+            className={`px-5 py-2.5 rounded-xl font-medium text-sm transition ${
+              activeFilter === 'pending'
+                ? 'bg-yellow-500 text-black'
+                : 'text-gray-400 hover:text-white'
+            }`}
           >
             ⏳ Ожидают ({counts.pending})
           </button>
           <button
             onClick={() => setActiveFilter('approved')}
-            className={`px-5 py-2.5 rounded-xl font-medium text-sm transition ${activeFilter === 'approved' ? 'bg-green-500 text-white' : 'text-gray-400 hover:text-white'}`}
+            className={`px-5 py-2.5 rounded-xl font-medium text-sm transition ${
+              activeFilter === 'approved'
+                ? 'bg-green-500 text-white'
+                : 'text-gray-400 hover:text-white'
+            }`}
           >
             ✅ Одобрены ({counts.approved})
           </button>
           <button
             onClick={() => setActiveFilter('rejected')}
-            className={`px-5 py-2.5 rounded-xl font-medium text-sm transition ${activeFilter === 'rejected' ? 'bg-red-500 text-white' : 'text-gray-400 hover:text-white'}`}
+            className={`px-5 py-2.5 rounded-xl font-medium text-sm transition ${
+              activeFilter === 'rejected'
+                ? 'bg-red-500 text-white'
+                : 'text-gray-400 hover:text-white'
+            }`}
           >
             ❌ Отклонены ({counts.rejected})
           </button>
@@ -176,7 +213,8 @@ export default function AdminPage() {
           <div className="space-y-4">
             {filtered.map((app) => (
               <div key={app.id} className="bg-[#111111] border border-white/10 rounded-3xl p-6">
-                {/* Шапка */}
+
+                {/* Шапка заявки */}
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 bg-orange-500/20 rounded-2xl flex items-center justify-center text-2xl">
@@ -188,13 +226,13 @@ export default function AdminPage() {
                       <div className="text-gray-500 text-xs mt-0.5">
                         {new Date(app.created_at).toLocaleDateString('ru', {
                           day: 'numeric', month: 'long', year: 'numeric',
-                          hour: '2-digit', minute: '2-digit'
+                          hour: '2-digit', minute: '2-digit',
                         })}
                       </div>
                     </div>
                   </div>
 
-                  {/* Кнопки только для pending */}
+                  {/* Кнопки */}
                   {app.status === 'pending' && (
                     <div className="flex gap-3">
                       <button
@@ -202,14 +240,14 @@ export default function AdminPage() {
                         disabled={processing === app.id}
                         className="bg-red-500/20 hover:bg-red-500 border border-red-500/30 text-red-400 hover:text-white px-5 py-2.5 rounded-2xl font-bold text-sm transition disabled:opacity-50"
                       >
-                        ❌ Отклонить
+                        {processing === app.id ? '...' : '❌ Отклонить'}
                       </button>
                       <button
                         onClick={() => approve(app)}
                         disabled={processing === app.id}
                         className="bg-green-500 hover:bg-green-600 text-white px-5 py-2.5 rounded-2xl font-bold text-sm transition disabled:opacity-50"
                       >
-                        ✅ Принять
+                        {processing === app.id ? '...' : '✅ Принять'}
                       </button>
                     </div>
                   )}
@@ -227,18 +265,24 @@ export default function AdminPage() {
                   )}
                 </div>
 
-                {/* Детали */}
+                {/* Статистика */}
                 <div className="grid grid-cols-3 gap-4 mb-4">
                   <div className="bg-white/5 rounded-2xl p-3 text-center">
-                    <div className="text-2xl font-black text-orange-400">{app.trophies?.toLocaleString()}</div>
+                    <div className="text-2xl font-black text-orange-400">
+                      {app.trophies?.toLocaleString() || '0'}
+                    </div>
                     <div className="text-xs text-gray-500 mt-0.5">Трофеев</div>
                   </div>
                   <div className="bg-white/5 rounded-2xl p-3 text-center">
-                    <div className="text-2xl font-black text-blue-400">{app.years_playing || 0}</div>
+                    <div className="text-2xl font-black text-blue-400">
+                      {app.years_playing || 0}
+                    </div>
                     <div className="text-xs text-gray-500 mt-0.5">Лет в игре</div>
                   </div>
                   <div className="bg-white/5 rounded-2xl p-3 text-center">
-                    <div className="text-lg font-black text-purple-400 truncate">{app.discord || '—'}</div>
+                    <div className="text-lg font-black text-purple-400 truncate">
+                      {app.discord || '—'}
+                    </div>
                     <div className="text-xs text-gray-500 mt-0.5">Discord</div>
                   </div>
                 </div>
