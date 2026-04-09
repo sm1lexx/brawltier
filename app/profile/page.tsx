@@ -21,7 +21,6 @@ export default function ProfilePage() {
       }
       setUser(user);
 
-      // Профиль
       const { data: profile } = await supabase
         .from('profiles')
         .select('*')
@@ -29,7 +28,6 @@ export default function ProfilePage() {
         .single();
       setProfile(profile);
 
-      // Мои заявки на тест (как игрок)
       const { data: tests } = await supabase
         .from('test_requests')
         .select('*, brawlers(name, icon_url)')
@@ -49,11 +47,11 @@ export default function ProfilePage() {
   };
 
   const statusLabels: Record<string, { text: string; color: string }> = {
-    waiting: { text: 'В очереди', color: 'bg-yellow-500/20 text-yellow-400' },
-    accepted: { text: 'Принята', color: 'bg-blue-500/20 text-blue-400' },
-    testing: { text: 'Тестирование', color: 'bg-purple-500/20 text-purple-400' },
-    completed: { text: 'Завершён', color: 'bg-green-500/20 text-green-400' },
-    cancelled: { text: 'Отменён', color: 'bg-red-500/20 text-red-400' },
+    waiting:   { text: 'В очереди',    color: 'bg-yellow-500/20 text-yellow-400' },
+    accepted:  { text: 'Принята',      color: 'bg-blue-500/20 text-blue-400' },
+    testing:   { text: 'Тестирование', color: 'bg-purple-500/20 text-purple-400' },
+    completed: { text: 'Завершён',     color: 'bg-green-500/20 text-green-400' },
+    cancelled: { text: 'Отменён',      color: 'bg-red-500/20 text-red-400' },
   };
 
   if (loading) {
@@ -67,8 +65,6 @@ export default function ProfilePage() {
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <div className="max-w-4xl mx-auto px-6 py-12">
-
-        {/* Шапка */}
         <Link href="/" className="text-gray-400 hover:text-white transition text-sm mb-8 inline-block">
           ← На главную
         </Link>
@@ -76,24 +72,29 @@ export default function ProfilePage() {
         {/* Карточка профиля */}
         <div className="bg-[#111111] border border-white/10 rounded-3xl p-8 mb-8">
           <div className="flex items-center gap-6 mb-6">
-            {/* Аватар */}
             <div className="w-20 h-20 bg-orange-500/20 rounded-2xl flex items-center justify-center text-4xl">
               🎮
             </div>
-
             <div className="flex-1">
-              <h1 className="text-3xl font-black">{profile?.username || 'Игрок'}</h1>
-              <div className="flex items-center gap-3 mt-1">
-                <span className="text-gray-400 text-sm">{profile?.player_tag}</span>
+              <div className="flex items-center gap-3 flex-wrap">
+                <h1 className="text-3xl font-black">{profile?.username || 'Игрок'}</h1>
+                {/* Бейджи */}
+                {profile?.is_admin && (
+                  <span className="bg-red-500/20 text-red-400 text-xs font-bold px-3 py-1 rounded-full">
+                    👑 ADMIN
+                  </span>
+                )}
                 {profile?.is_tester && (
                   <span className="bg-orange-500/20 text-orange-400 text-xs font-bold px-3 py-1 rounded-full">
                     🛡️ ТЕСТЕР
                   </span>
                 )}
               </div>
+              <div className="flex items-center gap-3 mt-1">
+                <span className="text-gray-400 text-sm">{profile?.player_tag}</span>
+              </div>
               <p className="text-gray-500 text-sm mt-1">{user?.email}</p>
             </div>
-
             <button
               onClick={handleLogout}
               className="bg-white/10 hover:bg-white/20 px-5 py-2.5 rounded-2xl text-sm font-medium transition"
@@ -102,7 +103,7 @@ export default function ProfilePage() {
             </button>
           </div>
 
-          {/* Кнопки навигации */}
+          {/* Кнопки */}
           <div className="flex gap-3 flex-wrap">
             <Link
               href="/tester"
@@ -128,6 +129,15 @@ export default function ProfilePage() {
                 🛡️ Стать тестером
               </Link>
             )}
+
+            {profile?.is_admin && (
+              <Link
+                href="/admin"
+                className="bg-red-500 hover:bg-red-600 px-6 py-3 rounded-2xl font-bold transition"
+              >
+                👑 Админ панель
+              </Link>
+            )}
           </div>
         </div>
 
@@ -149,32 +159,29 @@ export default function ProfilePage() {
           <div className="space-y-3">
             {myTests.map((test) => {
               const status = statusLabels[test.status] || { text: test.status, color: 'bg-gray-500/20 text-gray-400' };
-
               return (
-                <div key={test.id} className="bg-[#111111] border border-white/10 rounded-2xl p-5 flex items-center gap-4">
+                <div
+                  key={test.id}
+                  className="bg-[#111111] border border-white/10 rounded-2xl p-5 flex items-center gap-4"
+                >
                   <img
-                    src={test.brawlers?.icon_url || 'https://via.placeholder.com/48/1f2937/9ca3af?text=??'}
-                    alt={test.brawlers?.name || ''}
+                    src={test.brawlers?.icon_url || 'https://via.placeholder.com/48'}
+                    alt=""
                     className="w-12 h-12 rounded-xl object-cover border border-white/10"
+                    onError={(e) => { e.currentTarget.src = 'https://via.placeholder.com/48'; }}
                   />
-
                   <div className="flex-1">
                     <div className="font-bold">{test.brawlers?.name || 'Неизвестный боец'}</div>
                     <div className="text-xs text-gray-500">
                       {new Date(test.created_at).toLocaleDateString('ru', {
-                        day: 'numeric',
-                        month: 'long',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
+                        day: 'numeric', month: 'long', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
                       })}
                     </div>
                   </div>
-
                   <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${status.color}`}>
                     {status.text}
                   </span>
-
                   {(test.status === 'accepted' || test.status === 'testing') && (
                     <Link
                       href={`/tester?chat=${test.id}`}
@@ -183,12 +190,16 @@ export default function ProfilePage() {
                       💬 Чат
                     </Link>
                   )}
+                  {test.status === 'completed' && test.result_tier && (
+                    <span className="text-xs font-black px-3 py-1.5 rounded-full bg-orange-500/20 text-orange-400">
+                      {test.result_tier}
+                    </span>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
-
       </div>
     </div>
   );

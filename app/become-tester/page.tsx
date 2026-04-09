@@ -1,189 +1,283 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { createSupabaseBrowser } from '@/lib/supabase/client';
 
 export default function BecomeTesterPage() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const supabase = createSupabaseBrowser();
 
-  const [nickname, setNickname] = useState('');
-  const [playerTag, setPlayerTag] = useState('');
-  const [yearsPlaying, setYearsPlaying] = useState('');
-  const [trophies, setTrophies] = useState('');
-  const [discord, setDiscord] = useState('');
-  const [about, setAbout] = useState('');
-
-  const [loading, setLoading] = useState(false);
-  const [ok, setOk] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [existingApp, setExistingApp] = useState<any>(null);
 
-  const submit = async () => {
+  const [formData, setFormData] = useState({
+    discord: '',
+    trophies: '',
+    years_playing: '',
+    about: '',
+  });
+
+  useEffect(() => {
+    const load = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        window.location.href = '/login';
+        return;
+      }
+      setUser(user);
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      setProfile(profile);
+
+      // Проверяем есть ли уже заявка
+      const { data: app } = await supabase
+        .from('tester_applications')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+      setExistingApp(app);
+
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
-    setOk(false);
 
-    if (!nickname.trim()) return setError('Введи ник');
-    if (!playerTag.trim()) return setError('Введи Player Tag');
+    if (!formData.discord.trim()) {
+      setError('Укажи Discord');
+      return;
+    }
+    if (!formData.trophies || parseInt(formData.trophies) < 0) {
+      setError('Укажи количество трофеев');
+      return;
+    }
+    if (!formData.about.trim() || formData.about.length < 20) {
+      setError('Расскажи о себе (минимум 20 символов)');
+      return;
+    }
 
-    setLoading(true);
-    try {
-      const body = {
-        nickname: nickname.trim(),
-        player_tag: playerTag.trim().toUpperCase(),
-        years_playing: yearsPlaying ? Number(yearsPlaying) : null,
-        trophies: trophies ? Number(trophies) : null,
-        discord: discord.trim() || null,
-        about: about.trim() || null,
+    setSubmitting(true);
+
+    const { error } = await supabase
+      .from('tester_applications')
+      .insert({
+        user_id: user.id,
+        username: profile?.username || user.email,
+        player_tag: profile?.player_tag || '#UNKNOWN',
+        discord: formData.discord.trim(),
+        trophies: parseInt(formData.trophies),
+        years_playing: parseInt(formData.years_playing) || 0,
+        about: formData.about.trim(),
         status: 'pending',
-      };
-
-      const res = await fetch(`${supabaseUrl}/rest/v1/tester_applications`, {
-        method: 'POST',
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=representation',
-        },
-        body: JSON.stringify(body),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || data?.hint || 'Не удалось отправить заявку');
-
-      setOk(true);
-      setNickname('');
-      setPlayerTag('');
-      setYearsPlaying('');
-      setTrophies('');
-      setDiscord('');
-      setAbout('');
-    } catch (e: any) {
-      setError(e?.message || String(e));
-    } finally {
-      setLoading(false);
+    if (error) {
+      setError('Ошибка: ' + error.message);
+      setSubmitting(false);
+      return;
     }
+
+    setSuccess(true);
+    setSubmitting(false);
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
+        Загрузка...
+      </div>
+    );
+  }
+
+  // Уже тестер
+  if (profile?.is_tester) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-6">
+        <div className="w-full max-w-md bg-[#111111] border border-white/10 rounded-3xl p-8 text-center">
+          <div className="text-6xl mb-4">🛡️</div>
+          <h1 className="text-2xl font-black mb-3">Ты уже тестер!</h1>
+          <p className="text-gray-400 mb-6">У тебя уже есть роль тестера</p>
+          <Link href="/tester" className="bg-orange-500 hover:bg-orange-600 px-8 py-3 rounded-2xl font-bold transition inline-block">
+            Панель тестера
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Уже подал заявку
+  if (existingApp && !success) {
+    const statusMap: Record<string, { text: string; color: string; icon: string }> = {
+      pending:  { text: 'На рассмотрении', color: 'text-yellow-400', icon: '⏳' },
+      approved: { text: 'Одобрена!',       color: 'text-green-400',  icon: '✅' },
+      rejected: { text: 'Отклонена',       color: 'text-red-400',    icon: '❌' },
+    };
+    const status = statusMap[existingApp.status] || statusMap.pending;
+
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-6">
+        <div className="w-full max-w-md bg-[#111111] border border-white/10 rounded-3xl p-8 text-center">
+          <div className="text-6xl mb-4">{status.icon}</div>
+          <h1 className="text-2xl font-black mb-3">Заявка отправлена</h1>
+          <p className={`text-lg font-bold mb-2 ${status.color}`}>{status.text}</p>
+          <p className="text-gray-400 text-sm mb-6">
+            Подана: {new Date(existingApp.created_at).toLocaleDateString('ru', {
+              day: 'numeric', month: 'long', year: 'numeric'
+            })}
+          </p>
+          {existingApp.status === 'rejected' && (
+            <p className="text-gray-400 text-sm mb-6">
+              Ты можешь подать новую заявку через некоторое время
+            </p>
+          )}
+          <Link href="/" className="bg-orange-500 hover:bg-orange-600 px-8 py-3 rounded-2xl font-bold transition inline-block">
+            На главную
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Успешно отправлена
+  if (success) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-6">
+        <div className="w-full max-w-md bg-[#111111] border border-white/10 rounded-3xl p-8 text-center">
+          <div className="text-6xl mb-4">✅</div>
+          <h1 className="text-2xl font-black mb-3">Заявка отправлена!</h1>
+          <p className="text-gray-400 mb-6">
+            Мы рассмотрим твою заявку и свяжемся с тобой в Discord
+          </p>
+          <Link href="/" className="bg-orange-500 hover:bg-orange-600 px-8 py-3 rounded-2xl font-bold transition inline-block">
+            На главную
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
-      <header className="border-b border-white/10 bg-[#0a0a0a]">
-        <div className="max-w-4xl mx-auto px-6 py-5 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <span className="text-2xl font-black tracking-tighter text-orange-500">BRAWL</span>
-            <span className="text-2xl font-black tracking-tighter">TIER</span>
-          </Link>
-          <Link href="/" className="text-sm text-gray-300 hover:text-white">
-            ← На главную
-          </Link>
-        </div>
-      </header>
+      <div className="max-w-2xl mx-auto px-6 py-12">
+        <Link href="/" className="text-gray-400 hover:text-white transition text-sm mb-8 inline-block">
+          ← На главную
+        </Link>
 
-      <main className="max-w-4xl mx-auto px-6 py-10">
-        <h1 className="text-4xl md:text-5xl font-black tracking-tighter mb-3">Стать тестером</h1>
-        <p className="text-gray-400 mb-8">
-          Заполни анкету — позже мы будем вручную проверять заявки и выдавать роль тестера.
-        </p>
+        <div className="mb-8">
+          <h1 className="text-5xl font-black mb-2">Стать тестером</h1>
+          <p className="text-gray-400 text-lg">Заполни анкету и мы рассмотрим твою заявку</p>
+        </div>
+
+        {/* Инфо игрока */}
+        <div className="bg-[#111111] border border-white/10 rounded-2xl p-4 mb-6 flex items-center gap-4">
+          <div className="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center text-xl">🎮</div>
+          <div>
+            <div className="font-bold">{profile?.username}</div>
+            <div className="text-sm text-gray-400">{profile?.player_tag}</div>
+          </div>
+        </div>
 
         {error && (
-          <div className="mb-6 rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-red-200">
-            {error}
+          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-400 text-sm">
+            ⚠️ {error}
           </div>
         )}
 
-        {ok && (
-          <div className="mb-6 rounded-2xl border border-green-500/30 bg-green-500/10 px-5 py-4 text-green-200">
-            Заявка отправлена. Мы рассмотрим её и свяжемся (позже добавим уведомления/Discord).
-          </div>
-        )}
-
-        <div className="rounded-3xl border border-white/10 bg-[#111111] p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-gray-400">Ник</label>
-              <input
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                className="mt-2 w-full bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500"
-                placeholder="Твой ник"
-              />
-            </div>
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div className="bg-[#111111] border border-white/10 rounded-3xl p-6 space-y-5">
 
             <div>
-              <label className="text-xs text-gray-400">Player Tag</label>
+              <label className="block text-sm font-medium text-gray-400 mb-1.5">
+                Discord <span className="text-red-400">*</span>
+              </label>
               <input
-                value={playerTag}
-                onChange={(e) => setPlayerTag(e.target.value)}
-                className="mt-2 w-full bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500"
-                placeholder="#ABC123"
+                type="text"
+                value={formData.discord}
+                onChange={(e) => setFormData({ ...formData, discord: e.target.value })}
+                placeholder="username#0000 или username"
+                required
+                className="w-full bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500 transition"
               />
             </div>
 
             <div>
-              <label className="text-xs text-gray-400">Сколько лет играешь</label>
+              <label className="block text-sm font-medium text-gray-400 mb-1.5">
+                Количество трофеев <span className="text-red-400">*</span>
+              </label>
               <input
-                value={yearsPlaying}
-                onChange={(e) => setYearsPlaying(e.target.value)}
-                className="mt-2 w-full bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500"
-                placeholder="Например: 3"
-                inputMode="numeric"
+                type="number"
+                value={formData.trophies}
+                onChange={(e) => setFormData({ ...formData, trophies: e.target.value })}
+                placeholder="например: 50000"
+                required
+                min="0"
+                className="w-full bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500 transition"
               />
             </div>
 
             <div>
-              <label className="text-xs text-gray-400">Трофеи (примерно)</label>
+              <label className="block text-sm font-medium text-gray-400 mb-1.5">
+                Сколько лет играешь в Brawl Stars
+              </label>
               <input
-                value={trophies}
-                onChange={(e) => setTrophies(e.target.value)}
-                className="mt-2 w-full bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500"
-                placeholder="Например: 45000"
-                inputMode="numeric"
+                type="number"
+                value={formData.years_playing}
+                onChange={(e) => setFormData({ ...formData, years_playing: e.target.value })}
+                placeholder="например: 3"
+                min="0"
+                max="10"
+                className="w-full bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500 transition"
               />
             </div>
 
-            <div className="md:col-span-2">
-              <label className="text-xs text-gray-400">Discord (необязательно)</label>
-              <input
-                value={discord}
-                onChange={(e) => setDiscord(e.target.value)}
-                className="mt-2 w-full bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500"
-                placeholder="nickname#0000 или @nickname"
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="text-xs text-gray-400">О себе / опыт / почему хочешь быть тестером</label>
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-1.5">
+                Расскажи о себе <span className="text-red-400">*</span>
+              </label>
               <textarea
-                value={about}
-                onChange={(e) => setAbout(e.target.value)}
-                className="mt-2 w-full min-h-[140px] bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500"
-                placeholder="Напиши про скилл, режимы, доступность по времени и т.д."
+                value={formData.about}
+                onChange={(e) => setFormData({ ...formData, about: e.target.value })}
+                placeholder="Почему хочешь стать тестером? Какой у тебя опыт? Какие бойцы твои любимые?"
+                required
+                rows={5}
+                className="w-full bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500 transition resize-none"
               />
-            </div>
-
-            <div className="md:col-span-2 flex gap-3">
-              <button
-                disabled={loading}
-                onClick={submit}
-                className="bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white px-6 py-3 rounded-2xl font-semibold transition"
-              >
-                {loading ? 'Отправка...' : 'Отправить заявку'}
-              </button>
-
-              <Link
-                href="/"
-                className="bg-white/10 hover:bg-white/20 px-6 py-3 rounded-2xl font-semibold transition text-center"
-              >
-                Назад
-              </Link>
+              <p className="text-xs text-gray-500 mt-1">{formData.about.length} / минимум 20 символов</p>
             </div>
           </div>
-        </div>
-      </main>
 
-      <footer className="text-center text-xs text-gray-500 py-10">
-        brawltier.ru • заявки тестеров
-      </footer>
+          {/* Требования */}
+          <div className="bg-orange-500/10 border border-orange-500/30 rounded-2xl p-4">
+            <p className="text-orange-400 font-bold text-sm mb-2">📋 Требования к тестеру:</p>
+            <ul className="text-gray-300 text-sm space-y-1">
+              <li>• Хорошее знание всех бойцов</li>
+              <li>• Умение объективно оценивать скилл</li>
+              <li>• Наличие Discord для связи</li>
+              <li>• Готовность тестировать регулярно</li>
+            </ul>
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed px-6 py-4 rounded-2xl font-bold text-xl transition"
+          >
+            {submitting ? 'Отправка...' : '🛡️ Подать заявку'}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
