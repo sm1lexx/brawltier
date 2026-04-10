@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
@@ -104,7 +104,6 @@ function TierModal({
   );
 }
 
-// ✅ Название функции изменено на TesterPageContent
 export default function TesterPageContent() {
   const supabase = createSupabaseBrowser();
   const searchParams = useSearchParams();
@@ -125,6 +124,14 @@ export default function TesterPageContent() {
 
   const [showTierModal, setShowTierModal] = useState(false);
   const [completingRequest, setCompletingRequest] = useState<TestRequest | null>(null);
+
+  // ✅ Ref для автопрокрутки
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // ✅ Автопрокрутка чата вниз
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   useEffect(() => {
     const load = async () => {
@@ -288,6 +295,7 @@ export default function TesterPageContent() {
     setMessages(data || []);
   };
 
+  // ✅ Realtime подписка без дубликатов
   useEffect(() => {
     if (!activeChat) return;
 
@@ -302,7 +310,22 @@ export default function TesterPageContent() {
           filter: `request_id=eq.${activeChat.id}`,
         },
         (payload) => {
-          setMessages((prev) => [...prev, payload.new as Message]);
+          const newMsg = payload.new as Message;
+          setMessages((prev) => {
+            // Проверяем дубликат (от оптимистичного обновления)
+            if (newMsg.sender_id === user?.id) {
+              const isDuplicate = prev.some(
+                (m) =>
+                  m.message === newMsg.message &&
+                  m.sender_id === newMsg.sender_id &&
+                  Math.abs(
+                    new Date(m.created_at).getTime() - new Date(newMsg.created_at).getTime()
+                  ) < 5000
+              );
+              if (isDuplicate) return prev;
+            }
+            return [...prev, newMsg];
+          });
         }
       )
       .subscribe();
@@ -310,20 +333,33 @@ export default function TesterPageContent() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [activeChat]);
+  }, [activeChat, user]);
 
+  // ✅ Отправка с оптимистичным обновлением
   const sendMessage = async () => {
     if (!newMessage.trim() || !activeChat) return;
     setSendingMessage(true);
 
+    const messageText = newMessage.trim();
+    setNewMessage('');
+
+    // Сразу показываем сообщение
+    const optimisticMsg: Message = {
+      id: crypto.randomUUID(),
+      message: messageText,
+      sender_id: user.id,
+      created_at: new Date().toISOString(),
+      is_system: false,
+    };
+    setMessages((prev) => [...prev, optimisticMsg]);
+
     await supabase.from('test_messages').insert({
       request_id: activeChat.id,
       sender_id: user.id,
-      message: newMessage.trim(),
+      message: messageText,
       is_system: false,
     });
 
-    setNewMessage('');
     setSendingMessage(false);
   };
 
@@ -387,6 +423,7 @@ export default function TesterPageContent() {
           </div>
         </div>
 
+        {/* Табы */}
         <div className="flex gap-2 mb-6 bg-[#111111] p-1.5 rounded-2xl border border-white/10 w-fit">
           <button
             onClick={() => setActiveTab('my')}
@@ -412,6 +449,7 @@ export default function TesterPageContent() {
           )}
         </div>
 
+        {/* Мои тесты */}
         {activeTab === 'my' && (
           <div>
             {profile?.is_tester && myTesterRequests.length > 0 && (
@@ -465,6 +503,7 @@ export default function TesterPageContent() {
           </div>
         )}
 
+        {/* Очередь */}
         {activeTab === 'queue' && profile?.is_tester && (
           <div className="space-y-3">
             {waitingRequests.length === 0 ? (
@@ -492,6 +531,7 @@ export default function TesterPageContent() {
           </div>
         )}
 
+        {/* Чат */}
         {activeTab === 'chat' && activeChat && (
           <div className="bg-[#111111] border border-white/10 rounded-3xl overflow-hidden flex flex-col" style={{ height: '600px' }}>
             <div className="px-6 py-4 border-b border-white/10 flex items-center gap-4">
@@ -528,6 +568,8 @@ export default function TesterPageContent() {
                   </div>
                 ))
               )}
+              {/* ✅ Автопрокрутка */}
+              <div ref={messagesEndRef} />
             </div>
 
             <div className="px-6 py-4 border-t border-white/10 flex gap-3">
