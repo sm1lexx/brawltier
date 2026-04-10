@@ -54,16 +54,13 @@ function TierModal({
       <div className="bg-[#111111] border border-white/10 rounded-3xl p-6 w-full max-w-md">
         <h2 className="text-2xl font-black mb-1">Выбери тир игрока</h2>
         <p className="text-gray-400 text-sm mb-6">Выбери тир который заслужил игрок</p>
-
         <div className="space-y-2 mb-6">
           {TIERS.map((tier) => (
             <button
               key={tier.id}
               onClick={() => setSelected(tier.id)}
               className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl border-2 transition-all ${
-                selected === tier.id
-                  ? 'border-white scale-[1.02]'
-                  : 'border-transparent hover:border-white/30'
+                selected === tier.id ? 'border-white scale-[1.02]' : 'border-transparent hover:border-white/30'
               } ${tier.color}`}
             >
               <div className="flex items-center gap-3">
@@ -73,9 +70,7 @@ function TierModal({
                   className="w-8 h-8 object-contain"
                   onError={(e) => { e.currentTarget.style.display = 'none'; }}
                 />
-                <span className={`font-black text-lg tracking-wider ${tier.text}`}>
-                  {tier.label}
-                </span>
+                <span className={`font-black text-lg tracking-wider ${tier.text}`}>{tier.label}</span>
               </div>
               <span className={`text-sm font-bold px-3 py-1 rounded-full bg-black/20 ${tier.text}`}>
                 +{tier.points} очков
@@ -83,12 +78,8 @@ function TierModal({
             </button>
           ))}
         </div>
-
         <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-2xl font-bold transition"
-          >
+          <button onClick={onClose} className="flex-1 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-2xl font-bold transition">
             Отмена
           </button>
           <button
@@ -105,6 +96,7 @@ function TierModal({
 }
 
 export default function TesterPageContent() {
+  // ✅ Один инстанс supabase на весь компонент
   const supabase = createSupabaseBrowser();
   const searchParams = useSearchParams();
 
@@ -125,10 +117,12 @@ export default function TesterPageContent() {
   const [showTierModal, setShowTierModal] = useState(false);
   const [completingRequest, setCompletingRequest] = useState<TestRequest | null>(null);
 
-  // ✅ Ref для автопрокрутки
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // ✅ Ref чтобы хранить ID отправленных сообщений (против дубликатов)
+  const sentMessageIds = useRef<Set<string>>(new Set());
 
-  // ✅ Автопрокрутка чата вниз
+  // Автопрокрутка
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -186,6 +180,124 @@ export default function TesterPageContent() {
         .order('created_at', { ascending: false });
       setMyTesterRequests(testerReqs || []);
     }
+  };
+
+  // ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ — Realtime подписка
+  useEffect(() => {
+    if (!activeChat || !user) return;
+
+    // Уникальное имя канала
+    const channelName = `chat-room-${activeChat.id}`;
+
+    const channel = supabase
+      .channel(channelName, {
+        config: {
+          // ✅ Broadcast для мгновенной доставки без задержки БД
+          broadcast: { self: false },
+        },
+      })
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'test_messages',
+          filter: `request_id=eq.${activeChat.id}`,
+        },
+        (payload) => {
+          const newMsg = payload.new as Message;
+
+          // ✅ Пропускаем если это наше собственное сообщение
+          // (оно уже добавлено оптимистично)
+          if (sentMessageIds.current.has(newMsg.id)) {
+            sentMessageIds.current.delete(newMsg.id);
+            return;
+          }
+
+          setMessages((prev) => {
+            // Дополнительная защита от дубликатов по id
+            if (prev.some((m) => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
+        }
+      )
+      .subscribe((status) => {
+        console.log('Realtime status:', status);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeChat?.id, user?.id]);
+
+  // ✅ Отправка — оптимистично + сохраняем реальный id
+  const sendMessage = async () => {
+    if (!newMessage.trim() || !activeChat || sendingMessage) return;
+
+    setSendingMessage(true);
+    const messageText = newMessage.trim();
+    setNewMessage('');
+
+    // Временный id для оптимистичного сообщения
+    const tempId = `temp-${Date.now()}`;
+
+    const optimisticMsg: Message = {
+      id: tempId,
+      message: messageText,
+      sender_id: user.id,
+      created_at: new Date().toISOString(),
+      is_system: false,
+    };
+
+    // Показываем сразу
+    setMessages((prev) => [...prev, optimisticMsg]);
+
+    // Отправляем в БД и получаем реальный id
+    const { data, error } = await supabase
+      .from('test_messages')
+      .insert({
+        request_id: activeChat.id,
+        sender_id: user.id,
+        message: messageText,
+        is_system: false,
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      // Если ошибка — убираем оптимистичное сообщение
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      console.error('Ошибка отправки:', error.message);
+      setSendingMessage(false);
+      return;
+    }
+
+    // ✅ Запоминаем реальный id чтобы Realtime не добавил дубликат
+    if (data?.id) {
+      sentMessageIds.current.add(data.id);
+    }
+
+    // Заменяем temp сообщение на реальное
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === tempId ? { ...m, id: data.id } : m
+      )
+    );
+
+    setSendingMessage(false);
+  };
+
+  const openChat = async (request: TestRequest) => {
+    setActiveChat(request);
+    setActiveTab('chat');
+    sentMessageIds.current.clear();
+
+    const { data } = await supabase
+      .from('test_messages')
+      .select('*')
+      .eq('request_id', request.id)
+      .order('created_at', { ascending: true });
+    setMessages(data || []);
   };
 
   const acceptRequest = async (request: TestRequest) => {
@@ -253,8 +365,6 @@ export default function TesterPageContent() {
       .eq('brawler_id', req.brawler_id)
       .single();
 
-    const existingPoints = existing?.points || 0;
-
     if (!existing) {
       await supabase.from('tier_results').insert({
         user_id: req.user_id,
@@ -265,15 +375,10 @@ export default function TesterPageContent() {
         player_tag: req.player_tag,
         test_request_id: req.id,
       });
-    } else if (points > existingPoints) {
+    } else if (points > (existing.points || 0)) {
       await supabase
         .from('tier_results')
-        .update({
-          tier,
-          points,
-          test_request_id: req.id,
-          updated_at: new Date().toISOString(),
-        })
+        .update({ tier, points, test_request_id: req.id, updated_at: new Date().toISOString() })
         .eq('id', existing.id);
     }
 
@@ -281,86 +386,6 @@ export default function TesterPageContent() {
     await loadRequests(user.id, profile?.is_tester);
     setActiveChat(null);
     setActiveTab('my');
-  };
-
-  const openChat = async (request: TestRequest) => {
-    setActiveChat(request);
-    setActiveTab('chat');
-
-    const { data } = await supabase
-      .from('test_messages')
-      .select('*')
-      .eq('request_id', request.id)
-      .order('created_at', { ascending: true });
-    setMessages(data || []);
-  };
-
-  // ✅ Realtime подписка без дубликатов
-  useEffect(() => {
-    if (!activeChat) return;
-
-    const channel = supabase
-      .channel(`chat-${activeChat.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'test_messages',
-          filter: `request_id=eq.${activeChat.id}`,
-        },
-        (payload) => {
-          const newMsg = payload.new as Message;
-          setMessages((prev) => {
-            // Проверяем дубликат (от оптимистичного обновления)
-            if (newMsg.sender_id === user?.id) {
-              const isDuplicate = prev.some(
-                (m) =>
-                  m.message === newMsg.message &&
-                  m.sender_id === newMsg.sender_id &&
-                  Math.abs(
-                    new Date(m.created_at).getTime() - new Date(newMsg.created_at).getTime()
-                  ) < 5000
-              );
-              if (isDuplicate) return prev;
-            }
-            return [...prev, newMsg];
-          });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [activeChat, user]);
-
-  // ✅ Отправка с оптимистичным обновлением
-  const sendMessage = async () => {
-    if (!newMessage.trim() || !activeChat) return;
-    setSendingMessage(true);
-
-    const messageText = newMessage.trim();
-    setNewMessage('');
-
-    // Сразу показываем сообщение
-    const optimisticMsg: Message = {
-      id: crypto.randomUUID(),
-      message: messageText,
-      sender_id: user.id,
-      created_at: new Date().toISOString(),
-      is_system: false,
-    };
-    setMessages((prev) => [...prev, optimisticMsg]);
-
-    await supabase.from('test_messages').insert({
-      request_id: activeChat.id,
-      sender_id: user.id,
-      message: messageText,
-      is_system: false,
-    });
-
-    setSendingMessage(false);
   };
 
   const timeAgo = (date: string) => {
@@ -380,19 +405,19 @@ export default function TesterPageContent() {
   };
 
   if (loading) {
-    return <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">Загрузка...</div>;
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
+        Загрузка...
+      </div>
+    );
   }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
-
       {showTierModal && completingRequest && (
         <TierModal
           onSelect={completeRequest}
-          onClose={() => {
-            setShowTierModal(false);
-            setCompletingRequest(null);
-          }}
+          onClose={() => { setShowTierModal(false); setCompletingRequest(null); }}
         />
       )}
 
@@ -541,7 +566,10 @@ export default function TesterPageContent() {
                 <div className="text-xs text-gray-400">{activeChat.brawlers?.name} • {activeChat.player_tag}</div>
               </div>
               {profile?.is_tester && activeChat.tester_id === user.id && (
-                <button onClick={() => startComplete(activeChat)} className="ml-auto bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-xl font-bold text-sm transition">
+                <button
+                  onClick={() => startComplete(activeChat)}
+                  className="ml-auto bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-xl font-bold text-sm transition"
+                >
                   ✅ Завершить тест
                 </button>
               )}
@@ -554,7 +582,9 @@ export default function TesterPageContent() {
                 messages.map((msg) => (
                   <div key={msg.id}>
                     {msg.is_system ? (
-                      <div className="text-center text-xs text-gray-500 bg-white/5 rounded-xl py-2 px-4">🔔 {msg.message}</div>
+                      <div className="text-center text-xs text-gray-500 bg-white/5 rounded-xl py-2 px-4">
+                        🔔 {msg.message}
+                      </div>
                     ) : (
                       <div className={`flex ${msg.sender_id === user.id ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${msg.sender_id === user.id ? 'bg-orange-500 text-white' : 'bg-[#1a1a1a] text-gray-200'}`}>
@@ -568,7 +598,6 @@ export default function TesterPageContent() {
                   </div>
                 ))
               )}
-              {/* ✅ Автопрокрутка */}
               <div ref={messagesEndRef} />
             </div>
 
@@ -577,7 +606,7 @@ export default function TesterPageContent() {
                 type="text"
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
                 placeholder="Напиши сообщение..."
                 className="flex-1 bg-[#1a1a1a] border border-white/20 rounded-2xl px-4 py-3 focus:outline-none focus:border-orange-500 transition"
               />
