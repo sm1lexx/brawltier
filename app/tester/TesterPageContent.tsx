@@ -96,7 +96,6 @@ function TierModal({
 }
 
 export default function TesterPageContent() {
-  // ✅ Один инстанс supabase на весь компонент
   const supabase = createSupabaseBrowser();
   const searchParams = useSearchParams();
 
@@ -118,14 +117,28 @@ export default function TesterPageContent() {
   const [completingRequest, setCompletingRequest] = useState<TestRequest | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  
-  // ✅ Ref чтобы хранить ID отправленных сообщений (против дубликатов)
   const sentMessageIds = useRef<Set<string>>(new Set());
 
-  // Автопрокрутка
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // ✅ Загрузка чата вынесена отдельно
+  const loadChatMessages = async (requestId: string) => {
+    const { data } = await supabase
+      .from('test_messages')
+      .select('*')
+      .eq('request_id', requestId)
+      .order('created_at', { ascending: true });
+    setMessages(data || []);
+  };
+
+  const openChat = async (request: TestRequest) => {
+    setActiveChat(request);
+    setActiveTab('chat');
+    sentMessageIds.current.clear();
+    await loadChatMessages(request.id);
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -146,8 +159,23 @@ export default function TesterPageContent() {
       await loadRequests(user.id, profile?.is_tester || false);
 
       const tabParam = searchParams.get('tab');
+      const chatParam = searchParams.get('chat'); // ✅ Читаем ?chat=ID из адреса
+
       if (tabParam === 'queue' && profile?.is_tester) {
         setActiveTab('queue');
+      } else if (chatParam) {
+        // ✅ Автоматически открываем чат по ID
+        const { data: req } = await supabase
+          .from('test_requests')
+          .select('*, brawlers(name, class, icon_url)')
+          .eq('id', chatParam)
+          .single();
+
+        if (req) {
+          setActiveChat(req);
+          setActiveTab('chat');
+          await loadChatMessages(req.id);
+        }
       }
 
       setLoading(false);
@@ -182,20 +210,13 @@ export default function TesterPageContent() {
     }
   };
 
-  // ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ — Realtime подписка
   useEffect(() => {
     if (!activeChat || !user) return;
 
-    // Уникальное имя канала
     const channelName = `chat-room-${activeChat.id}`;
 
     const channel = supabase
-      .channel(channelName, {
-        config: {
-          // ✅ Broadcast для мгновенной доставки без задержки БД
-          broadcast: { self: false },
-        },
-      })
+      .channel(channelName, { config: { broadcast: { self: false } } })
       .on(
         'postgres_changes',
         {
@@ -207,30 +228,24 @@ export default function TesterPageContent() {
         (payload) => {
           const newMsg = payload.new as Message;
 
-          // ✅ Пропускаем если это наше собственное сообщение
-          // (оно уже добавлено оптимистично)
           if (sentMessageIds.current.has(newMsg.id)) {
             sentMessageIds.current.delete(newMsg.id);
             return;
           }
 
           setMessages((prev) => {
-            // Дополнительная защита от дубликатов по id
             if (prev.some((m) => m.id === newMsg.id)) return prev;
             return [...prev, newMsg];
           });
         }
       )
-      .subscribe((status) => {
-        console.log('Realtime status:', status);
-      });
+      .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [activeChat?.id, user?.id]);
 
-  // ✅ Отправка — оптимистично + сохраняем реальный id
   const sendMessage = async () => {
     if (!newMessage.trim() || !activeChat || sendingMessage) return;
 
@@ -238,7 +253,6 @@ export default function TesterPageContent() {
     const messageText = newMessage.trim();
     setNewMessage('');
 
-    // Временный id для оптимистичного сообщения
     const tempId = `temp-${Date.now()}`;
 
     const optimisticMsg: Message = {
@@ -249,10 +263,8 @@ export default function TesterPageContent() {
       is_system: false,
     };
 
-    // Показываем сразу
     setMessages((prev) => [...prev, optimisticMsg]);
 
-    // Отправляем в БД и получаем реальный id
     const { data, error } = await supabase
       .from('test_messages')
       .insert({
@@ -265,19 +277,15 @@ export default function TesterPageContent() {
       .single();
 
     if (error) {
-      // Если ошибка — убираем оптимистичное сообщение
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      console.error('Ошибка отправки:', error.message);
       setSendingMessage(false);
       return;
     }
 
-    // ✅ Запоминаем реальный id чтобы Realtime не добавил дубликат
     if (data?.id) {
       sentMessageIds.current.add(data.id);
     }
 
-    // Заменяем temp сообщение на реальное
     setMessages((prev) =>
       prev.map((m) =>
         m.id === tempId ? { ...m, id: data.id } : m
@@ -285,19 +293,6 @@ export default function TesterPageContent() {
     );
 
     setSendingMessage(false);
-  };
-
-  const openChat = async (request: TestRequest) => {
-    setActiveChat(request);
-    setActiveTab('chat');
-    sentMessageIds.current.clear();
-
-    const { data } = await supabase
-      .from('test_messages')
-      .select('*')
-      .eq('request_id', request.id)
-      .order('created_at', { ascending: true });
-    setMessages(data || []);
   };
 
   const acceptRequest = async (request: TestRequest) => {
