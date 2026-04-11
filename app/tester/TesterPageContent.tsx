@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
@@ -14,6 +14,7 @@ type TestRequest = {
   brawler_id: number;
   user_id: string;
   tester_id: string | null;
+  result_tier?: string | null; // ✅ добавили
   brawlers?: {
     name: string;
     class: string;
@@ -27,6 +28,7 @@ type Message = {
   sender_id: string;
   created_at: string;
   is_system: boolean;
+  request_id: string;
 };
 
 const TIERS = [
@@ -40,13 +42,7 @@ const TIERS = [
   { id: 'BRONZE',    label: 'BRONZE',    points: 5,   color: 'bg-[#b45309]', text: 'text-white' },
 ];
 
-function TierModal({
-  onSelect,
-  onClose,
-}: {
-  onSelect: (tier: string) => void;
-  onClose: () => void;
-}) {
+function TierModal({ onSelect, onClose }: { onSelect: (tier: string) => void; onClose: () => void }) {
   const [selected, setSelected] = useState<string | null>(null);
 
   return (
@@ -54,6 +50,7 @@ function TierModal({
       <div className="bg-[#111111] border border-white/10 rounded-3xl p-6 w-full max-w-md">
         <h2 className="text-2xl font-black mb-1">Выбери тир игрока</h2>
         <p className="text-gray-400 text-sm mb-6">Выбери тир который заслужил игрок</p>
+
         <div className="space-y-2 mb-6">
           {TIERS.map((tier) => (
             <button
@@ -78,6 +75,7 @@ function TierModal({
             </button>
           ))}
         </div>
+
         <div className="flex gap-3">
           <button onClick={onClose} className="flex-1 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-2xl font-bold transition">
             Отмена
@@ -85,7 +83,7 @@ function TierModal({
           <button
             onClick={() => selected && onSelect(selected)}
             disabled={!selected}
-            className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-3 rounded-2xl font-bold transition"
+            className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 px-4 py-3 rounded-2xl font-bold transition"
           >
             {selected ? `Назначить ${selected}` : 'Выбери тир'}
           </button>
@@ -96,7 +94,8 @@ function TierModal({
 }
 
 export default function TesterPageContent() {
-  const supabase = createSupabaseBrowser();
+  // ✅ Один инстанс supabase
+  const supabase = useMemo(() => createSupabaseBrowser(), []);
   const searchParams = useSearchParams();
 
   const [user, setUser] = useState<any>(null);
@@ -119,27 +118,12 @@ export default function TesterPageContent() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sentMessageIds = useRef<Set<string>>(new Set());
 
+  // Автопрокрутка
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ✅ Загрузка чата вынесена отдельно
-  const loadChatMessages = async (requestId: string) => {
-    const { data } = await supabase
-      .from('test_messages')
-      .select('*')
-      .eq('request_id', requestId)
-      .order('created_at', { ascending: true });
-    setMessages(data || []);
-  };
-
-  const openChat = async (request: TestRequest) => {
-    setActiveChat(request);
-    setActiveTab('chat');
-    sentMessageIds.current.clear();
-    await loadChatMessages(request.id);
-  };
-
+  // Загрузка при старте
   useEffect(() => {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -159,22 +143,25 @@ export default function TesterPageContent() {
       await loadRequests(user.id, profile?.is_tester || false);
 
       const tabParam = searchParams.get('tab');
-      const chatParam = searchParams.get('chat'); // ✅ Читаем ?chat=ID из адреса
+      if (tabParam === 'queue' && profile?.is_tester) setActiveTab('queue');
 
-      if (tabParam === 'queue' && profile?.is_tester) {
-        setActiveTab('queue');
-      } else if (chatParam) {
-        // ✅ Автоматически открываем чат по ID
+      // ✅ Если в URL есть ?chat=ID — сразу открываем чат
+      const chatParam = searchParams.get('chat');
+      if (chatParam) {
         const { data: req } = await supabase
           .from('test_requests')
           .select('*, brawlers(name, class, icon_url)')
           .eq('id', chatParam)
           .single();
-
         if (req) {
           setActiveChat(req);
           setActiveTab('chat');
-          await loadChatMessages(req.id);
+          const { data: msgs } = await supabase
+            .from('test_messages')
+            .select('*')
+            .eq('request_id', chatParam)
+            .order('created_at', { ascending: true });
+          setMessages(msgs || []);
         }
       }
 
@@ -210,24 +197,39 @@ export default function TesterPageContent() {
     }
   };
 
+  // ✅ ИСПРАВЛЕННЫЙ Realtime — без filter, фильтруем вручную
   useEffect(() => {
-    if (!activeChat || !user) return;
+    if (!activeChat?.id || !user?.id) return;
 
     const channelName = `chat-room-${activeChat.id}`;
+    console.log('SUBSCRIBE start channel:', channelName);
 
     const channel = supabase
-      .channel(channelName, { config: { broadcast: { self: false } } })
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'test_messages',
-          filter: `request_id=eq.${activeChat.id}`,
+          // ✅ Убрали filter — фильтруем вручную ниже
         },
         (payload) => {
           const newMsg = payload.new as Message;
 
+          console.log('Realtime событие:', {
+            request_id: newMsg.request_id,
+            activeChat_id: activeChat.id,
+            text: newMsg.message,
+          });
+
+          // ✅ Ручная фильтрация по request_id
+          if (String(newMsg.request_id) !== String(activeChat.id)) {
+            console.log('Пропускаем — не наш чат');
+            return;
+          }
+
+          // ✅ Пропускаем своё сообщение (уже добавлено оптимистично)
           if (sentMessageIds.current.has(newMsg.id)) {
             sentMessageIds.current.delete(newMsg.id);
             return;
@@ -239,12 +241,31 @@ export default function TesterPageContent() {
           });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Realtime status:', status);
+      });
 
     return () => {
+      console.log('UNSUBSCRIBE channel:', channelName);
       supabase.removeChannel(channel);
     };
-  }, [activeChat?.id, user?.id]);
+  }, [activeChat?.id, user?.id, supabase]);
+
+  const openChat = async (request: TestRequest) => {
+    console.log('Открываем чат:', request.id);
+    setActiveChat(request);
+    setActiveTab('chat');
+    sentMessageIds.current.clear();
+
+    const { data } = await supabase
+      .from('test_messages')
+      .select('*')
+      .eq('request_id', request.id)
+      .order('created_at', { ascending: true });
+
+    console.log('Загружено сообщений:', data?.length || 0);
+    setMessages(data || []);
+  };
 
   const sendMessage = async () => {
     if (!newMessage.trim() || !activeChat || sendingMessage) return;
@@ -254,13 +275,13 @@ export default function TesterPageContent() {
     setNewMessage('');
 
     const tempId = `temp-${Date.now()}`;
-
     const optimisticMsg: Message = {
       id: tempId,
       message: messageText,
       sender_id: user.id,
       created_at: new Date().toISOString(),
       is_system: false,
+      request_id: activeChat.id,
     };
 
     setMessages((prev) => [...prev, optimisticMsg]);
@@ -277,19 +298,16 @@ export default function TesterPageContent() {
       .single();
 
     if (error) {
+      console.error('Ошибка:', error.message);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setSendingMessage(false);
       return;
     }
 
-    if (data?.id) {
-      sentMessageIds.current.add(data.id);
-    }
+    if (data?.id) sentMessageIds.current.add(data.id);
 
     setMessages((prev) =>
-      prev.map((m) =>
-        m.id === tempId ? { ...m, id: data.id } : m
-      )
+      prev.map((m) => (m.id === tempId ? { ...m, id: data.id } : m))
     );
 
     setSendingMessage(false);
@@ -307,10 +325,7 @@ export default function TesterPageContent() {
       .eq('id', request.id)
       .eq('status', 'waiting');
 
-    if (error) {
-      alert('Ошибка: ' + error.message);
-      return;
-    }
+    if (error) return alert('Ошибка: ' + error.message);
 
     await supabase.from('test_messages').insert({
       request_id: request.id,
@@ -332,19 +347,16 @@ export default function TesterPageContent() {
     if (!completingRequest) return;
     setShowTierModal(false);
 
-    const tierData = TIERS.find(t => t.id === tier);
+    const tierData = TIERS.find((t) => t.id === tier);
     const points = tierData?.points || 0;
     const req = completingRequest;
 
-    await supabase
-      .from('test_requests')
-      .update({
-        status: 'completed',
-        result_tier: tier,
-        completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', req.id);
+    await supabase.from('test_requests').update({
+      status: 'completed',
+      result_tier: tier,
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.id);
 
     await supabase.from('test_messages').insert({
       request_id: req.id,
@@ -355,7 +367,7 @@ export default function TesterPageContent() {
 
     const { data: existing } = await supabase
       .from('tier_results')
-      .select('id, tier, points')
+      .select('id, points')
       .eq('user_id', req.user_id)
       .eq('brawler_id', req.brawler_id)
       .single();
@@ -371,10 +383,12 @@ export default function TesterPageContent() {
         test_request_id: req.id,
       });
     } else if (points > (existing.points || 0)) {
-      await supabase
-        .from('tier_results')
-        .update({ tier, points, test_request_id: req.id, updated_at: new Date().toISOString() })
-        .eq('id', existing.id);
+      await supabase.from('tier_results').update({
+        tier,
+        points,
+        test_request_id: req.id,
+        updated_at: new Date().toISOString(),
+      }).eq('id', existing.id);
     }
 
     setCompletingRequest(null);
@@ -417,6 +431,8 @@ export default function TesterPageContent() {
       )}
 
       <div className="max-w-6xl mx-auto px-6 py-8">
+
+        {/* Заголовок */}
         <div className="flex items-center justify-between mb-8">
           <div>
             <div className="flex items-center gap-3 mb-2">
@@ -424,7 +440,9 @@ export default function TesterPageContent() {
               <span className="text-gray-600">•</span>
               <Link href="/profile" className="text-gray-400 hover:text-white transition text-sm">Профиль</Link>
             </div>
-            <h1 className="text-4xl font-black">{profile?.is_tester ? 'Панель тестера' : 'Мои тесты'}</h1>
+            <h1 className="text-4xl font-black">
+              {profile?.is_tester ? 'Панель тестера' : 'Мои тесты'}
+            </h1>
             <p className="text-gray-400 mt-1">
               <span className="text-orange-400 font-bold">{profile?.username}</span>
               {profile?.is_tester && (
@@ -469,7 +487,7 @@ export default function TesterPageContent() {
           )}
         </div>
 
-        {/* Мои тесты */}
+        {/* ========== МОИ ТЕСТЫ ========== */}
         {activeTab === 'my' && (
           <div>
             {profile?.is_tester && myTesterRequests.length > 0 && (
@@ -478,13 +496,17 @@ export default function TesterPageContent() {
                 <div className="space-y-3">
                   {myTesterRequests.map((req) => (
                     <div key={req.id} className="bg-[#111111] border border-orange-500/20 rounded-2xl p-5 flex items-center gap-4">
-                      <img src={req.brawlers?.icon_url || 'https://via.placeholder.com/48'} alt="" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
+                      <img src={req.brawlers?.icon_url || 'https://via.placeholder.com/48'} alt="" className="w-12 h-12 rounded-xl object-cover" />
                       <div className="flex-1">
                         <div className="font-bold">{req.player_name}</div>
                         <div className="text-xs text-gray-400">{req.brawlers?.name} • {req.player_tag} • {timeAgo(req.created_at)}</div>
                       </div>
-                      <button onClick={() => openChat(req)} className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-xl text-sm font-bold transition">💬 Чат</button>
-                      <button onClick={() => startComplete(req)} className="bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-xl text-sm font-bold transition">✅ Завершить</button>
+                      <button onClick={() => openChat(req)} className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-xl text-sm font-bold transition">
+                        💬 Чат
+                      </button>
+                      <button onClick={() => startComplete(req)} className="bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-xl text-sm font-bold transition">
+                        ✅ Завершить
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -496,7 +518,9 @@ export default function TesterPageContent() {
               <div className="bg-[#111111] border border-white/10 rounded-2xl p-12 text-center">
                 <div className="text-4xl mb-3">📭</div>
                 <p className="text-gray-400 mb-4">У тебя нет заявок на тест</p>
-                <Link href="/test" className="bg-orange-500 hover:bg-orange-600 px-6 py-3 rounded-2xl font-bold transition inline-block">Пройти тест</Link>
+                <Link href="/test" className="bg-orange-500 hover:bg-orange-600 px-6 py-3 rounded-2xl font-bold transition inline-block">
+                  Пройти тест
+                </Link>
               </div>
             ) : (
               <div className="space-y-3">
@@ -504,16 +528,25 @@ export default function TesterPageContent() {
                   const status = statusLabels[req.status] || { text: req.status, color: 'bg-gray-500/20 text-gray-400' };
                   return (
                     <div key={req.id} className="bg-[#111111] border border-white/10 rounded-2xl p-5 flex items-center gap-4">
-                      <img src={req.brawlers?.icon_url || 'https://via.placeholder.com/48'} alt="" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
+                      <img src={req.brawlers?.icon_url || 'https://via.placeholder.com/48'} alt="" className="w-12 h-12 rounded-xl object-cover" />
                       <div className="flex-1">
                         <div className="font-bold">{req.brawlers?.name || 'Боец'}</div>
                         <div className="text-xs text-gray-400">
                           {new Date(req.created_at).toLocaleDateString('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
-                      <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${status.color}`}>{status.text}</span>
+                      <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${status.color}`}>
+                        {status.text}
+                      </span>
                       {(req.status === 'accepted' || req.status === 'testing') && (
-                        <button onClick={() => openChat(req)} className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-xl text-sm font-bold transition">💬 Чат</button>
+                        <button onClick={() => openChat(req)} className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-xl text-sm font-bold transition">
+                          💬 Чат
+                        </button>
+                      )}
+                      {req.status === 'completed' && req.result_tier && (
+                        <span className="text-xs font-black px-3 py-1.5 rounded-full bg-orange-500/20 text-orange-400">
+                          {req.result_tier}
+                        </span>
                       )}
                     </div>
                   );
@@ -523,7 +556,7 @@ export default function TesterPageContent() {
           </div>
         )}
 
-        {/* Очередь */}
+        {/* ========== ОЧЕРЕДЬ ========== */}
         {activeTab === 'queue' && profile?.is_tester && (
           <div className="space-y-3">
             {waitingRequests.length === 0 ? (
@@ -534,7 +567,7 @@ export default function TesterPageContent() {
             ) : (
               waitingRequests.map((req) => (
                 <div key={req.id} className="bg-[#111111] border border-white/10 rounded-2xl p-5 flex items-center gap-4">
-                  <img src={req.brawlers?.icon_url || 'https://via.placeholder.com/48'} alt="" className="w-14 h-14 rounded-2xl object-cover border border-white/10" />
+                  <img src={req.brawlers?.icon_url || 'https://via.placeholder.com/48'} alt="" className="w-14 h-14 rounded-2xl object-cover" />
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-bold text-lg">{req.player_name}</span>
@@ -544,32 +577,33 @@ export default function TesterPageContent() {
                       Боец: <span className="text-white">{req.brawlers?.name}</span> • {timeAgo(req.created_at)}
                     </div>
                   </div>
-                  <button onClick={() => acceptRequest(req)} className="bg-green-500 hover:bg-green-600 px-5 py-2.5 rounded-2xl font-bold text-sm transition">✅ Принять</button>
+                  <button onClick={() => acceptRequest(req)} className="bg-green-500 hover:bg-green-600 px-5 py-2.5 rounded-2xl font-bold text-sm transition">
+                    ✅ Принять
+                  </button>
                 </div>
               ))
             )}
           </div>
         )}
 
-        {/* Чат */}
+        {/* ========== ЧАТ ========== */}
         {activeTab === 'chat' && activeChat && (
           <div className="bg-[#111111] border border-white/10 rounded-3xl overflow-hidden flex flex-col" style={{ height: '600px' }}>
+            {/* Шапка чата */}
             <div className="px-6 py-4 border-b border-white/10 flex items-center gap-4">
               <img src={activeChat.brawlers?.icon_url || 'https://via.placeholder.com/40'} alt="" className="w-10 h-10 rounded-xl object-cover" />
               <div>
                 <div className="font-bold">{activeChat.player_name}</div>
                 <div className="text-xs text-gray-400">{activeChat.brawlers?.name} • {activeChat.player_tag}</div>
               </div>
-              {profile?.is_tester && activeChat.tester_id === user.id && (
-                <button
-                  onClick={() => startComplete(activeChat)}
-                  className="ml-auto bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-xl font-bold text-sm transition"
-                >
+              {profile?.is_tester && activeChat.tester_id === user?.id && (
+                <button onClick={() => startComplete(activeChat)} className="ml-auto bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-xl font-bold text-sm transition">
                   ✅ Завершить тест
                 </button>
               )}
             </div>
 
+            {/* Сообщения */}
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
               {messages.length === 0 ? (
                 <div className="text-center text-gray-500 py-12">Чат пуст. Напиши первым!</div>
@@ -581,10 +615,10 @@ export default function TesterPageContent() {
                         🔔 {msg.message}
                       </div>
                     ) : (
-                      <div className={`flex ${msg.sender_id === user.id ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${msg.sender_id === user.id ? 'bg-orange-500 text-white' : 'bg-[#1a1a1a] text-gray-200'}`}>
+                      <div className={`flex ${msg.sender_id === user?.id ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${msg.sender_id === user?.id ? 'bg-orange-500 text-white' : 'bg-[#1a1a1a] text-gray-200'}`}>
                           <p className="text-sm">{msg.message}</p>
-                          <p className={`text-[10px] mt-1 ${msg.sender_id === user.id ? 'text-orange-200' : 'text-gray-500'}`}>
+                          <p className={`text-[10px] mt-1 ${msg.sender_id === user?.id ? 'text-orange-200' : 'text-gray-500'}`}>
                             {new Date(msg.created_at).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })}
                           </p>
                         </div>
@@ -596,6 +630,7 @@ export default function TesterPageContent() {
               <div ref={messagesEndRef} />
             </div>
 
+            {/* Поле ввода */}
             <div className="px-6 py-4 border-t border-white/10 flex gap-3">
               <input
                 type="text"
@@ -615,6 +650,7 @@ export default function TesterPageContent() {
             </div>
           </div>
         )}
+
       </div>
     </div>
   );
