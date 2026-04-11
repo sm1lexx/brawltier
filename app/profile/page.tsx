@@ -4,6 +4,73 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
 
+// ✅ Генерируем список 200 аватарок
+const AVATARS = Array.from({ length: 200 }, (_, i) => `/profile_icons/${i + 1}.png`);
+
+function AvatarModal({
+  current,
+  onSelect,
+  onClose,
+}: {
+  current: string | null;
+  onSelect: (url: string) => void;
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<string | null>(current);
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center px-4">
+      <div className="bg-[#111111] border border-white/10 rounded-3xl p-6 w-full max-w-2xl max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-2xl font-black">Выбери аватарку</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl transition">✕</button>
+        </div>
+
+        {/* Сетка аватарок */}
+        <div className="overflow-y-auto flex-1 pr-1">
+          <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2">
+            {AVATARS.map((url) => (
+              <button
+                key={url}
+                onClick={() => setSelected(url)}
+                className={`rounded-2xl overflow-hidden border-2 transition-all hover:scale-110 ${
+                  selected === url
+                    ? 'border-orange-500 scale-110'
+                    : 'border-transparent hover:border-white/30'
+                }`}
+              >
+                <img
+                  src={url}
+                  alt=""
+                  className="w-full h-full object-cover aspect-square"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Кнопки */}
+        <div className="flex gap-3 mt-4 pt-4 border-t border-white/10">
+          <button
+            onClick={onClose}
+            className="flex-1 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-2xl font-bold transition"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={() => selected && onSelect(selected)}
+            disabled={!selected}
+            className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 px-4 py-3 rounded-2xl font-bold transition"
+          >
+            Сохранить
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProfilePage() {
   const supabase = createSupabaseBrowser();
 
@@ -11,6 +78,8 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [myTests, setMyTests] = useState<any[]>([]);
+  const [showAvatarModal, setShowAvatarModal] = useState(false);
+  const [savingAvatar, setSavingAvatar] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -46,6 +115,25 @@ export default function ProfilePage() {
     window.location.href = '/';
   };
 
+  // ✅ Сохраняем аватарку
+  const handleSelectAvatar = async (url: string) => {
+    setSavingAvatar(true);
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ avatar_url: url })
+      .eq('id', user.id);
+
+    if (error) {
+      console.error('Ошибка сохранения аватарки:', error.message);
+    } else {
+      setProfile((prev: any) => ({ ...prev, avatar_url: url }));
+    }
+
+    setShowAvatarModal(false);
+    setSavingAvatar(false);
+  };
+
   const statusLabels: Record<string, { text: string; color: string }> = {
     waiting:   { text: 'В очереди',    color: 'bg-yellow-500/20 text-yellow-400' },
     accepted:  { text: 'Принята',      color: 'bg-blue-500/20 text-blue-400' },
@@ -64,6 +152,16 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
+
+      {/* Модалка выбора аватарки */}
+      {showAvatarModal && (
+        <AvatarModal
+          current={profile?.avatar_url || null}
+          onSelect={handleSelectAvatar}
+          onClose={() => setShowAvatarModal(false)}
+        />
+      )}
+
       <div className="max-w-4xl mx-auto px-6 py-12">
         <Link href="/" className="text-gray-400 hover:text-white transition text-sm mb-8 inline-block">
           ← На главную
@@ -72,13 +170,36 @@ export default function ProfilePage() {
         {/* Карточка профиля */}
         <div className="bg-[#111111] border border-white/10 rounded-3xl p-8 mb-8">
           <div className="flex items-center gap-6 mb-6">
-            <div className="w-20 h-20 bg-orange-500/20 rounded-2xl flex items-center justify-center text-4xl">
-              🎮
+
+            {/* ✅ Аватарка с кнопкой смены */}
+            <div className="relative group">
+              <div className="w-20 h-20 rounded-2xl overflow-hidden border-2 border-white/10 group-hover:border-orange-500 transition">
+                {profile?.avatar_url ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt="avatar"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-orange-500/20 flex items-center justify-center text-4xl">
+                    🎮
+                  </div>
+                )}
+              </div>
+
+              {/* Кнопка смены аватарки */}
+              <button
+                onClick={() => setShowAvatarModal(true)}
+                disabled={savingAvatar}
+                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition rounded-2xl flex items-center justify-center text-xs font-bold text-white"
+              >
+                {savingAvatar ? '...' : '✏️ Сменить'}
+              </button>
             </div>
+
             <div className="flex-1">
               <div className="flex items-center gap-3 flex-wrap">
                 <h1 className="text-3xl font-black">{profile?.username || 'Игрок'}</h1>
-                {/* Бейджи */}
                 {profile?.is_admin && (
                   <span className="bg-red-500/20 text-red-400 text-xs font-bold px-3 py-1 rounded-full">
                     👑 ADMIN
@@ -94,7 +215,16 @@ export default function ProfilePage() {
                 <span className="text-gray-400 text-sm">{profile?.player_tag}</span>
               </div>
               <p className="text-gray-500 text-sm mt-1">{user?.email}</p>
+
+              {/* ✅ Кнопка смены аватарки под именем */}
+              <button
+                onClick={() => setShowAvatarModal(true)}
+                className="mt-2 text-xs text-orange-400 hover:text-orange-300 transition"
+              >
+                🖼️ Сменить аватарку
+              </button>
             </div>
+
             <button
               onClick={handleLogout}
               className="bg-white/10 hover:bg-white/20 px-5 py-2.5 rounded-2xl text-sm font-medium transition"
@@ -105,36 +235,21 @@ export default function ProfilePage() {
 
           {/* Кнопки */}
           <div className="flex gap-3 flex-wrap">
-            <Link
-              href="/tester"
-              className="bg-orange-500 hover:bg-orange-600 px-6 py-3 rounded-2xl font-bold transition"
-            >
+            <Link href="/tester" className="bg-orange-500 hover:bg-orange-600 px-6 py-3 rounded-2xl font-bold transition">
               🎮 Мои тесты
             </Link>
-
             {profile?.is_tester && (
-              <Link
-                href="/tester?tab=queue"
-                className="bg-green-500 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold transition"
-              >
+              <Link href="/tester?tab=queue" className="bg-green-500 hover:bg-green-600 px-6 py-3 rounded-2xl font-bold transition">
                 📋 Очередь заявок
               </Link>
             )}
-
             {!profile?.is_tester && (
-              <Link
-                href="/become-tester"
-                className="border border-white/20 hover:border-white/50 px-6 py-3 rounded-2xl font-bold transition"
-              >
+              <Link href="/become-tester" className="border border-white/20 hover:border-white/50 px-6 py-3 rounded-2xl font-bold transition">
                 🛡️ Стать тестером
               </Link>
             )}
-
             {profile?.is_admin && (
-              <Link
-                href="/admin"
-                className="bg-red-500 hover:bg-red-600 px-6 py-3 rounded-2xl font-bold transition"
-              >
+              <Link href="/admin" className="bg-red-500 hover:bg-red-600 px-6 py-3 rounded-2xl font-bold transition">
                 👑 Админ панель
               </Link>
             )}
@@ -148,10 +263,7 @@ export default function ProfilePage() {
           <div className="bg-[#111111] border border-white/10 rounded-2xl p-12 text-center">
             <div className="text-4xl mb-3">📭</div>
             <p className="text-gray-400 mb-4">У тебя пока нет тестов</p>
-            <Link
-              href="/test"
-              className="bg-orange-500 hover:bg-orange-600 px-6 py-3 rounded-2xl font-bold transition inline-block"
-            >
+            <Link href="/test" className="bg-orange-500 hover:bg-orange-600 px-6 py-3 rounded-2xl font-bold transition inline-block">
               Пройти тест
             </Link>
           </div>
@@ -160,10 +272,7 @@ export default function ProfilePage() {
             {myTests.map((test) => {
               const status = statusLabels[test.status] || { text: test.status, color: 'bg-gray-500/20 text-gray-400' };
               return (
-                <div
-                  key={test.id}
-                  className="bg-[#111111] border border-white/10 rounded-2xl p-5 flex items-center gap-4"
-                >
+                <div key={test.id} className="bg-[#111111] border border-white/10 rounded-2xl p-5 flex items-center gap-4">
                   <img
                     src={test.brawlers?.icon_url || 'https://via.placeholder.com/48'}
                     alt=""
@@ -175,7 +284,7 @@ export default function ProfilePage() {
                     <div className="text-xs text-gray-500">
                       {new Date(test.created_at).toLocaleDateString('ru', {
                         day: 'numeric', month: 'long', year: 'numeric',
-                        hour: '2-digit', minute: '2-digit'
+                        hour: '2-digit', minute: '2-digit',
                       })}
                     </div>
                   </div>
@@ -183,10 +292,7 @@ export default function ProfilePage() {
                     {status.text}
                   </span>
                   {(test.status === 'accepted' || test.status === 'testing') && (
-                    <Link
-                      href={`/tester?chat=${test.id}`}
-                      className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-xl text-sm font-bold transition"
-                    >
+                    <Link href={`/tester?chat=${test.id}`} className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-xl text-sm font-bold transition">
                       💬 Чат
                     </Link>
                   )}

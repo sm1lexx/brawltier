@@ -21,10 +21,7 @@ type TierResult = {
   tier: string;
   points: number;
   created_at: string;
-  brawlers: {
-    name: string;
-    icon_url: string | null;
-  }[];
+  brawlers: { name: string; icon_url: string | null }[];
 };
 
 type Profile = {
@@ -34,6 +31,7 @@ type Profile = {
   is_tester: boolean;
   is_admin: boolean;
   created_at: string;
+  avatar_url: string | null;
 };
 
 export default function UserProfilePage() {
@@ -49,7 +47,6 @@ export default function UserProfilePage() {
 
   useEffect(() => {
     const load = async () => {
-      // ✅ Загружаем профиль
       const { data: profileData, error } = await supabase
         .from('profiles')
         .select('*')
@@ -64,7 +61,6 @@ export default function UserProfilePage() {
 
       setProfile(profileData);
 
-      // ✅ Загружаем результаты тиров
       const { data: results } = await supabase
         .from('tier_results')
         .select('id, tier, points, created_at, brawlers(name, icon_url)')
@@ -72,10 +68,8 @@ export default function UserProfilePage() {
         .order('points', { ascending: false });
 
       const safeResults = (results || []) as TierResult[];
-
       setTierResults(safeResults);
 
-      // ✅ Считаем сумму очков
       const total = safeResults.reduce((sum, r) => sum + (r.points || 0), 0);
       setTotalPoints(total);
 
@@ -86,12 +80,8 @@ export default function UserProfilePage() {
   }, [userId]);
 
   const getRole = () => {
-    if (profile?.is_admin)
-      return { label: 'ADMIN', color: 'bg-red-500/20 text-red-400', icon: '👑' };
-
-    if (profile?.is_tester)
-      return { label: 'ТЕСТЕР', color: 'bg-orange-500/20 text-orange-400', icon: '🛡️' };
-
+    if (profile?.is_admin) return { label: 'ADMIN', color: 'bg-red-500/20 text-red-400', icon: '👑' };
+    if (profile?.is_tester) return { label: 'ТЕСТЕР', color: 'bg-orange-500/20 text-orange-400', icon: '🛡️' };
     return { label: 'PLAYER', color: 'bg-white/10 text-gray-400', icon: '🎮' };
   };
 
@@ -124,8 +114,20 @@ export default function UserProfilePage() {
         {/* Карточка профиля */}
         <div className="bg-[#111111] border border-white/10 rounded-3xl p-8 mb-6">
           <div className="flex items-center gap-6">
-            <div className="w-24 h-24 bg-orange-500/20 rounded-3xl flex items-center justify-center text-5xl">
-              🎮
+
+            {/* ✅ Аватарка */}
+            <div className="w-24 h-24 rounded-3xl overflow-hidden border-2 border-white/10 flex-shrink-0">
+              {profile?.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt="avatar"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full bg-orange-500/20 flex items-center justify-center text-5xl">
+                  🎮
+                </div>
+              )}
             </div>
 
             <div className="flex-1">
@@ -143,12 +145,10 @@ export default function UserProfilePage() {
                   <div className="text-orange-400 font-black text-xl">{totalPoints}</div>
                   <div className="text-xs text-gray-500">очков</div>
                 </div>
-
                 <div>
                   <div className="text-white font-black text-xl">{tierResults.length}</div>
                   <div className="text-xs text-gray-500">тестов</div>
                 </div>
-
                 {bestTier && (
                   <div>
                     <span className={`text-sm font-black px-3 py-1 rounded-xl ${TIER_BADGE[bestTier.tier]}`}>
@@ -176,10 +176,7 @@ export default function UserProfilePage() {
         ) : (
           <div className="space-y-3">
             {tierResults.map((result) => (
-              <div
-                key={result.id}
-                className="bg-[#111111] border border-white/10 rounded-2xl p-4 flex items-center gap-4"
-              >
+              <div key={result.id} className="bg-[#111111] border border-white/10 rounded-2xl p-4 flex items-center gap-4">
                 <div className="w-14 h-14 rounded-2xl overflow-hidden bg-black/40 border border-white/10">
                   <img
                     src={result.brawlers?.[0]?.icon_url || 'https://via.placeholder.com/56'}
@@ -187,20 +184,13 @@ export default function UserProfilePage() {
                     className="w-full h-full object-cover"
                   />
                 </div>
-
                 <div className="flex-1">
-                  <div className="font-bold text-lg">
-                    {result.brawlers?.[0]?.name || '?'}
-                  </div>
+                  <div className="font-bold text-lg">{result.brawlers?.[0]?.name || '?'}</div>
                   <div className="text-xs text-gray-500">
                     {new Date(result.created_at).toLocaleDateString('ru')}
                   </div>
                 </div>
-
-                <div className="text-orange-400 font-black">
-                  +{result.points}
-                </div>
-
+                <div className="text-orange-400 font-black">+{result.points}</div>
                 <span className={`text-sm font-black px-4 py-2 rounded-xl ${TIER_BADGE[result.tier]}`}>
                   {result.tier}
                 </span>
