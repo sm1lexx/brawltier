@@ -214,8 +214,14 @@ export default function TesterPageContent() {
           table: 'test_messages',
           // ✅ Убрали filter — фильтруем вручную ниже
         },
-        (payload) => {
-          const newMsg = payload.new as Message;
+(payload) => {
+  const newMsg = payload.new as Message;
+  
+  // ✅ Добавь этот лог
+  console.log('RAW payload:', payload.new);
+  console.log('activeChat.id:', activeChat?.id);
+  console.log('newMsg.request_id:', newMsg.request_id);
+  console.log('Совпадают?', String(newMsg.request_id) === String(activeChat?.id));
 
           console.log('Realtime событие:', {
             request_id: newMsg.request_id,
