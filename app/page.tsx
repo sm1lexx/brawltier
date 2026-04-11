@@ -24,6 +24,7 @@ type TierResult = {
   player_tag: string;
   tier: string;
   points: number;
+  avatar_url?: string | null; // ✅
 };
 
 type LeaderboardEntry = {
@@ -31,17 +32,27 @@ type LeaderboardEntry = {
   username: string;
   player_tag: string;
   total_points: number;
+  avatar_url: string | null; // ✅
   best_tiers: { brawler_name: string; brawler_icon: string | null; tier: string }[];
 };
 
 function UserMenu() {
   const supabase = createSupabaseBrowser();
   const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(async ({ data }) => {
       setUser(data.user ?? null);
+      if (data.user) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('avatar_url, username')
+          .eq('id', data.user.id)
+          .single();
+        setProfile(prof);
+      }
       setLoading(false);
     });
   }, []);
@@ -66,11 +77,16 @@ function UserMenu() {
 
   return (
     <div className="flex items-center gap-3">
-      <Link
-        href="/profile"
-        className="bg-orange-500 hover:bg-orange-600 px-5 py-2.5 rounded-2xl font-semibold text-sm transition"
-      >
-        👤 Профиль
+      <Link href="/profile" className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-2xl font-semibold text-sm transition">
+        {/* ✅ Аватарка в хедере */}
+        <div className="w-6 h-6 rounded-full overflow-hidden border border-white/30">
+          {profile?.avatar_url ? (
+            <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <span>👤</span>
+          )}
+        </div>
+        Профиль
       </Link>
       <button
         onClick={logout}
@@ -126,6 +142,20 @@ function getRankStyle(rank: number) {
   return 'bg-white/10 text-gray-300';
 }
 
+// ✅ Компонент аватарки
+function Avatar({ url, size = 'md' }: { url?: string | null; size?: 'sm' | 'md' | 'lg' }) {
+  const sizes = { sm: 'w-8 h-8', md: 'w-12 h-12', lg: 'w-16 h-16' };
+  return (
+    <div className={`${sizes[size]} rounded-xl overflow-hidden border border-white/10 flex-shrink-0 bg-orange-500/20 flex items-center justify-center`}>
+      {url ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <span className="text-lg">🎮</span>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const supabase = createSupabaseBrowser();
 
@@ -145,22 +175,13 @@ export default function Home() {
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
   useEffect(() => {
-    if (!supabaseUrl || !supabaseKey) {
-      setLoading(false);
-      return;
-    }
+    if (!supabaseUrl || !supabaseKey) { setLoading(false); return; }
     setLoading(true);
     fetch(`${supabaseUrl}/rest/v1/brawlers?select=*&order=name`, {
-      headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`,
-      },
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
     })
       .then((res) => res.json())
-      .then((data) => {
-        setBrawlers(data || []);
-        setLoading(false);
-      })
+      .then((data) => { setBrawlers(data || []); setLoading(false); })
       .catch(() => setLoading(false));
   }, [supabaseUrl, supabaseKey]);
 
@@ -172,18 +193,22 @@ export default function Home() {
   const loadBrawlerTiers = async (brawlerId: number | string) => {
     setBrawlerTiersLoading(true);
 
+    // ✅ Запрашиваем avatar_url через join с profiles
     const { data } = await supabase
       .from('tier_results')
-      .select('id, user_id, username, player_tag, tier, points')
+      .select('id, user_id, username, player_tag, tier, points, profiles(avatar_url)')
       .eq('brawler_id', brawlerId)
       .order('points', { ascending: false });
 
     const grouped: Record<string, TierResult[]> = {};
     TIER_DEFINITIONS.forEach(t => { grouped[t.id] = []; });
 
-    data?.forEach((result: TierResult) => {
+    data?.forEach((result: any) => {
       if (grouped[result.tier]) {
-        grouped[result.tier].push(result);
+        grouped[result.tier].push({
+          ...result,
+          avatar_url: result.profiles?.avatar_url || null, // ✅
+        });
       }
     });
 
@@ -199,9 +224,10 @@ export default function Home() {
   const loadLeaderboard = async () => {
     setLeaderboardLoading(true);
 
+    // ✅ Запрашиваем avatar_url через join с profiles
     const { data: results } = await supabase
       .from('tier_results')
-      .select('user_id, username, player_tag, tier, points, brawlers(name, icon_url)');
+      .select('user_id, username, player_tag, tier, points, brawlers(name, icon_url), profiles(avatar_url)');
 
     if (!results || results.length === 0) {
       setLeaderboard([]);
@@ -218,6 +244,7 @@ export default function Home() {
           username: r.username,
           player_tag: r.player_tag,
           total_points: 0,
+          avatar_url: r.profiles?.avatar_url || null, // ✅
           best_tiers: [],
         };
       }
@@ -282,16 +309,10 @@ export default function Home() {
           Реальный скилл • Тиры от BRONZE до PRO • Overall топ
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center mt-12">
-          <Link
-            href="/test"
-            className="bg-orange-500 hover:bg-orange-600 text-white px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center"
-          >
+          <Link href="/test" className="bg-orange-500 hover:bg-orange-600 text-white px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center">
             Пройти тест
           </Link>
-          <Link
-            href="/become-tester"
-            className="border-2 border-white/30 hover:border-white/70 px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center"
-          >
+          <Link href="/become-tester" className="border-2 border-white/30 hover:border-white/70 px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center">
             Стать тестером
           </Link>
         </div>
@@ -301,7 +322,6 @@ export default function Home() {
       <div id="brawlers" className="max-w-7xl mx-auto px-6 pb-8">
         {selectedBrawler ? (
           <div>
-            {/* Хедер бойца */}
             <div className="flex items-center gap-4 mb-8">
               <button
                 onClick={() => { setSelectedBrawler(null); setBrawlerTiers({}); }}
@@ -337,41 +357,23 @@ export default function Home() {
                       key={tier.id}
                       className="min-w-[280px] sm:min-w-[320px] flex-shrink-0 snap-start flex flex-col bg-[#141414] rounded-xl overflow-hidden border border-white/5"
                     >
-                      {/* Хедер тира */}
                       <div className={`px-4 py-3 flex items-center justify-between ${tier.color}`}>
                         <div className="flex items-center gap-2">
-                          <img
-                            src={tier.icon}
-                            alt={tier.label}
-                            className="w-7 h-7 object-contain drop-shadow-md"
-                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                          />
-                          <span className="font-bold text-lg drop-shadow-md tracking-wider">
-                            {tier.label}
-                          </span>
+                          <img src={tier.icon} alt={tier.label} className="w-7 h-7 object-contain drop-shadow-md" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                          <span className="font-bold text-lg drop-shadow-md tracking-wider">{tier.label}</span>
                         </div>
-                        <span className="text-xs font-medium text-white/70 bg-black/20 px-2 py-0.5 rounded-full">
-                          {players.length}
-                        </span>
+                        <span className="text-xs font-medium text-white/70 bg-black/20 px-2 py-0.5 rounded-full">{players.length}</span>
                       </div>
 
-                      {/* Игроки */}
                       <div className="flex flex-col">
                         {players.length === 0 ? (
-                          <div className="px-4 py-6 text-center text-gray-600 text-sm">
-                            Пока никого нет
-                          </div>
+                          <div className="px-4 py-6 text-center text-gray-600 text-sm">Пока никого нет</div>
                         ) : (
                           players.map((player) => (
-                            <div
-                              key={player.id}
-                              className="flex items-center gap-3 px-3 py-2.5 bg-[#1a1a1a] border-b border-white/5 hover:bg-[#252525] transition-colors"
-                            >
-                              <div className="w-8 h-8 rounded-md bg-orange-500/20 flex items-center justify-center text-sm flex-shrink-0">
-                                🎮
-                              </div>
+                            <div key={player.id} className="flex items-center gap-3 px-3 py-2.5 bg-[#1a1a1a] border-b border-white/5 hover:bg-[#252525] transition-colors">
+                              {/* ✅ Аватарка игрока в тире */}
+                              <Avatar url={player.avatar_url} size="sm" />
                               <div className="flex-1 min-w-0">
-                                {/* ✅ user_id для правильной ссылки */}
                                 <Link
                                   href={`/user/${player.user_id}`}
                                   className="font-medium text-sm text-gray-200 truncate hover:text-orange-400 transition block"
@@ -409,32 +411,18 @@ export default function Home() {
               <div className="flex overflow-x-auto border-b border-white/10">
                 <button
                   onClick={() => setActiveTab('Overall')}
-                  className={`px-6 py-5 text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 ${
-                    activeTab === 'Overall' ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'
-                  }`}
+                  className={`px-6 py-5 text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 ${activeTab === 'Overall' ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'}`}
                 >
-                  <img
-                    src="/icons/classes/top.png"
-                    alt="TOP"
-                    className="w-6 h-6 object-contain"
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                  />
+                  <img src="/icons/classes/top.png" alt="TOP" className="w-6 h-6 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                   TOP
                 </button>
                 {CLASSES.map((cls) => (
                   <button
                     key={cls.id}
                     onClick={() => setActiveTab(cls.id)}
-                    className={`px-6 py-5 text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 ${
-                      activeTab === cls.id ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'
-                    }`}
+                    className={`px-6 py-5 text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 ${activeTab === cls.id ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'}`}
                   >
-                    <img
-                      src={cls.icon}
-                      alt={cls.label}
-                      className="w-5 h-5 object-contain"
-                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                    />
+                    <img src={cls.icon} alt={cls.label} className="w-5 h-5 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                     {cls.label}
                   </button>
                 ))}
@@ -445,10 +433,7 @@ export default function Home() {
                 <div className="p-6">
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl font-black">🏆 TOP 100 игроков</h2>
-                    <button
-                      onClick={loadLeaderboard}
-                      className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm transition"
-                    >
+                    <button onClick={loadLeaderboard} className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm transition">
                       🔄 Обновить
                     </button>
                   </div>
@@ -479,15 +464,12 @@ export default function Home() {
                               {rank}
                             </div>
 
-                            {/* Аватар */}
-                            <div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center flex-shrink-0 text-xl">
-                              🎮
-                            </div>
+                            {/* ✅ Аватарка в лидерборде */}
+                            <Avatar url={entry.avatar_url} size="md" />
 
                             {/* Ник + тег + очки */}
                             <div className="flex items-center gap-6 flex-shrink-0 min-w-[280px]">
                               <div>
-                                {/* ✅ Кликабельный ник */}
                                 <Link
                                   href={`/user/${entry.user_id}`}
                                   className="font-bold text-base leading-tight hover:text-orange-400 transition block"
@@ -497,21 +479,11 @@ export default function Home() {
                                 <div className="text-xs text-gray-500 mt-0.5">{entry.player_tag}</div>
                               </div>
 
-                              {/* Очки */}
                               <div className="flex items-center gap-1.5">
-                                <img
-                                  src="/icons/points.png"
-                                  alt="points"
-                                  className="w-5 h-5 object-contain"
-                                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                                />
+                                <img src="/icons/points.png" alt="points" className="w-5 h-5 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                                 <div>
-                                  <span className="text-orange-400 font-black text-lg leading-none">
-                                    {entry.total_points}
-                                  </span>
-                                  <div className="text-[10px] text-gray-500 font-medium tracking-wider uppercase">
-                                    очков
-                                  </div>
+                                  <span className="text-orange-400 font-black text-lg leading-none">{entry.total_points}</span>
+                                  <div className="text-[10px] text-gray-500 font-medium tracking-wider uppercase">очков</div>
                                 </div>
                               </div>
                             </div>
@@ -525,9 +497,7 @@ export default function Home() {
                                       src={bt.brawler_icon || `https://via.placeholder.com/36/1f2937/9ca3af?text=?`}
                                       alt={bt.brawler_name}
                                       className="w-full h-full object-cover"
-                                      onError={(e) => {
-                                        e.currentTarget.src = `https://via.placeholder.com/36/1f2937/9ca3af?text=?`;
-                                      }}
+                                      onError={(e) => { e.currentTarget.src = `https://via.placeholder.com/36/1f2937/9ca3af?text=?`; }}
                                     />
                                   </div>
                                   <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md leading-none ${TIER_BADGE[bt.tier] || 'bg-gray-600 text-white'}`}>
@@ -536,9 +506,7 @@ export default function Home() {
                                 </div>
                               ))}
                               {entry.best_tiers.length > 5 && (
-                                <div className="text-xs text-gray-500 flex-shrink-0">
-                                  +{entry.best_tiers.length - 5}
-                                </div>
+                                <div className="text-xs text-gray-500 flex-shrink-0">+{entry.best_tiers.length - 5}</div>
                               )}
                             </div>
                           </div>
@@ -557,9 +525,7 @@ export default function Home() {
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                       {filteredBrawlers.map((brawler) => {
-                        const iconUrl =
-                          brawler.icon_url ||
-                          `https://via.placeholder.com/150/1f2937/9ca3af?text=${brawler.name.slice(0, 2)}`;
+                        const iconUrl = brawler.icon_url || `https://via.placeholder.com/150/1f2937/9ca3af?text=${brawler.name.slice(0, 2)}`;
                         return (
                           <div
                             key={brawler.id}
@@ -571,9 +537,7 @@ export default function Home() {
                                 src={iconUrl}
                                 alt={brawler.name}
                                 className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  e.currentTarget.src = `https://via.placeholder.com/150/1f2937/9ca3af?text=${brawler.name.slice(0, 2)}`;
-                                }}
+                                onError={(e) => { e.currentTarget.src = `https://via.placeholder.com/150/1f2937/9ca3af?text=${brawler.name.slice(0, 2)}`; }}
                               />
                             </div>
                             <div className="font-semibold text-lg">{brawler.name}</div>
@@ -583,7 +547,6 @@ export default function Home() {
                       })}
                     </div>
                   )}
-
                   {!loading && filteredBrawlers.length === 0 && (
                     <p className="text-center py-20 text-gray-400">Ничего не найдено</p>
                   )}
