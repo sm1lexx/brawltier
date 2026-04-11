@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createSupabaseBrowser } from '@/lib/supabase/client';
 
@@ -24,7 +24,7 @@ type TierResult = {
   player_tag: string;
   tier: string;
   points: number;
-  avatar_url?: string | null; // ✅
+  avatar_url?: string | null;
 };
 
 type LeaderboardEntry = {
@@ -32,9 +32,23 @@ type LeaderboardEntry = {
   username: string;
   player_tag: string;
   total_points: number;
-  avatar_url: string | null; // ✅
+  avatar_url: string | null;
   best_tiers: { brawler_name: string; brawler_icon: string | null; tier: string }[];
 };
+
+// ✅ Компонент аватарки
+function Avatar({ url, size = 'md' }: { url?: string | null; size?: 'sm' | 'md' | 'lg' }) {
+  const sizes = { sm: 'w-8 h-8', md: 'w-12 h-12', lg: 'w-16 h-16' };
+  return (
+    <div className={`${sizes[size]} rounded-xl overflow-hidden border border-white/10 flex-shrink-0 bg-orange-500/20 flex items-center justify-center`}>
+      {url ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <span className="text-lg">🎮</span>
+      )}
+    </div>
+  );
+}
 
 function UserMenu() {
   const supabase = createSupabaseBrowser();
@@ -77,13 +91,15 @@ function UserMenu() {
 
   return (
     <div className="flex items-center gap-3">
-      <Link href="/profile" className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-2xl font-semibold text-sm transition">
-        {/* ✅ Аватарка в хедере */}
-        <div className="w-6 h-6 rounded-full overflow-hidden border border-white/30">
+      <Link
+        href="/profile"
+        className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 px-4 py-2.5 rounded-2xl font-semibold text-sm transition"
+      >
+        <div className="w-6 h-6 rounded-full overflow-hidden border border-white/30 flex items-center justify-center bg-orange-400">
           {profile?.avatar_url ? (
             <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
           ) : (
-            <span>👤</span>
+            <span className="text-xs">👤</span>
           )}
         </div>
         Профиль
@@ -142,20 +158,6 @@ function getRankStyle(rank: number) {
   return 'bg-white/10 text-gray-300';
 }
 
-// ✅ Компонент аватарки
-function Avatar({ url, size = 'md' }: { url?: string | null; size?: 'sm' | 'md' | 'lg' }) {
-  const sizes = { sm: 'w-8 h-8', md: 'w-12 h-12', lg: 'w-16 h-16' };
-  return (
-    <div className={`${sizes[size]} rounded-xl overflow-hidden border border-white/10 flex-shrink-0 bg-orange-500/20 flex items-center justify-center`}>
-      {url ? (
-        <img src={url} alt="" className="w-full h-full object-cover" />
-      ) : (
-        <span className="text-lg">🎮</span>
-      )}
-    </div>
-  );
-}
-
 export default function Home() {
   const supabase = createSupabaseBrowser();
 
@@ -174,17 +176,22 @@ export default function Home() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
+  // Загрузка бравлеров
   useEffect(() => {
     if (!supabaseUrl || !supabaseKey) { setLoading(false); return; }
     setLoading(true);
     fetch(`${supabaseUrl}/rest/v1/brawlers?select=*&order=name`, {
-      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+      },
     })
       .then((res) => res.json())
       .then((data) => { setBrawlers(data || []); setLoading(false); })
       .catch(() => setLoading(false));
   }, [supabaseUrl, supabaseKey]);
 
+  // Загрузка тиров бравлера
   useEffect(() => {
     if (!selectedBrawler) return;
     loadBrawlerTiers(selectedBrawler.id);
@@ -193,12 +200,25 @@ export default function Home() {
   const loadBrawlerTiers = async (brawlerId: number | string) => {
     setBrawlerTiersLoading(true);
 
-    // ✅ Запрашиваем avatar_url через join с profiles
     const { data } = await supabase
       .from('tier_results')
-      .select('id, user_id, username, player_tag, tier, points, profiles(avatar_url)')
+      .select('id, user_id, username, player_tag, tier, points')
       .eq('brawler_id', brawlerId)
       .order('points', { ascending: false });
+
+    // ✅ Грузим аватарки отдельно
+    const userIds = [...new Set((data || []).map((r: any) => r.user_id))];
+
+    let avatarMap: Record<string, string | null> = {};
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, avatar_url')
+        .in('id', userIds);
+      profiles?.forEach((p: any) => {
+        avatarMap[p.id] = p.avatar_url || null;
+      });
+    }
 
     const grouped: Record<string, TierResult[]> = {};
     TIER_DEFINITIONS.forEach(t => { grouped[t.id] = []; });
@@ -207,7 +227,7 @@ export default function Home() {
       if (grouped[result.tier]) {
         grouped[result.tier].push({
           ...result,
-          avatar_url: result.profiles?.avatar_url || null, // ✅
+          avatar_url: avatarMap[result.user_id] || null,
         });
       }
     });
@@ -216,6 +236,7 @@ export default function Home() {
     setBrawlerTiersLoading(false);
   };
 
+  // Загрузка лидерборда
   useEffect(() => {
     if (activeTab !== 'Overall') return;
     loadLeaderboard();
@@ -224,15 +245,28 @@ export default function Home() {
   const loadLeaderboard = async () => {
     setLeaderboardLoading(true);
 
-    // ✅ Запрашиваем avatar_url через join с profiles
     const { data: results } = await supabase
       .from('tier_results')
-      .select('user_id, username, player_tag, tier, points, brawlers(name, icon_url), profiles(avatar_url)');
+      .select('user_id, username, player_tag, tier, points, brawlers(name, icon_url)');
 
     if (!results || results.length === 0) {
       setLeaderboard([]);
       setLeaderboardLoading(false);
       return;
+    }
+
+    // ✅ Грузим аватарки отдельно
+    const userIds = [...new Set(results.map((r: any) => r.user_id))];
+
+    let avatarMap: Record<string, string | null> = {};
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, avatar_url')
+        .in('id', userIds);
+      profiles?.forEach((p: any) => {
+        avatarMap[p.id] = p.avatar_url || null;
+      });
     }
 
     const userMap: Record<string, LeaderboardEntry> = {};
@@ -244,7 +278,7 @@ export default function Home() {
           username: r.username,
           player_tag: r.player_tag,
           total_points: 0,
-          avatar_url: r.profiles?.avatar_url || null, // ✅
+          avatar_url: avatarMap[r.user_id] || null,
           best_tiers: [],
         };
       }
@@ -309,10 +343,16 @@ export default function Home() {
           Реальный скилл • Тиры от BRONZE до PRO • Overall топ
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center mt-12">
-          <Link href="/test" className="bg-orange-500 hover:bg-orange-600 text-white px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center">
+          <Link
+            href="/test"
+            className="bg-orange-500 hover:bg-orange-600 text-white px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center"
+          >
             Пройти тест
           </Link>
-          <Link href="/become-tester" className="border-2 border-white/30 hover:border-white/70 px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center">
+          <Link
+            href="/become-tester"
+            className="border-2 border-white/30 hover:border-white/70 px-10 py-5 rounded-3xl text-xl font-semibold transition-all text-center"
+          >
             Стать тестером
           </Link>
         </div>
@@ -322,6 +362,7 @@ export default function Home() {
       <div id="brawlers" className="max-w-7xl mx-auto px-6 pb-8">
         {selectedBrawler ? (
           <div>
+            {/* Хедер бойца */}
             <div className="flex items-center gap-4 mb-8">
               <button
                 onClick={() => { setSelectedBrawler(null); setBrawlerTiers({}); }}
@@ -357,21 +398,35 @@ export default function Home() {
                       key={tier.id}
                       className="min-w-[280px] sm:min-w-[320px] flex-shrink-0 snap-start flex flex-col bg-[#141414] rounded-xl overflow-hidden border border-white/5"
                     >
+                      {/* Хедер тира */}
                       <div className={`px-4 py-3 flex items-center justify-between ${tier.color}`}>
                         <div className="flex items-center gap-2">
-                          <img src={tier.icon} alt={tier.label} className="w-7 h-7 object-contain drop-shadow-md" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                          <img
+                            src={tier.icon}
+                            alt={tier.label}
+                            className="w-7 h-7 object-contain drop-shadow-md"
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                          />
                           <span className="font-bold text-lg drop-shadow-md tracking-wider">{tier.label}</span>
                         </div>
-                        <span className="text-xs font-medium text-white/70 bg-black/20 px-2 py-0.5 rounded-full">{players.length}</span>
+                        <span className="text-xs font-medium text-white/70 bg-black/20 px-2 py-0.5 rounded-full">
+                          {players.length}
+                        </span>
                       </div>
 
+                      {/* Игроки */}
                       <div className="flex flex-col">
                         {players.length === 0 ? (
-                          <div className="px-4 py-6 text-center text-gray-600 text-sm">Пока никого нет</div>
+                          <div className="px-4 py-6 text-center text-gray-600 text-sm">
+                            Пока никого нет
+                          </div>
                         ) : (
                           players.map((player) => (
-                            <div key={player.id} className="flex items-center gap-3 px-3 py-2.5 bg-[#1a1a1a] border-b border-white/5 hover:bg-[#252525] transition-colors">
-                              {/* ✅ Аватарка игрока в тире */}
+                            <div
+                              key={player.id}
+                              className="flex items-center gap-3 px-3 py-2.5 bg-[#1a1a1a] border-b border-white/5 hover:bg-[#252525] transition-colors"
+                            >
+                              {/* ✅ Аватарка */}
                               <Avatar url={player.avatar_url} size="sm" />
                               <div className="flex-1 min-w-0">
                                 <Link
@@ -411,18 +466,32 @@ export default function Home() {
               <div className="flex overflow-x-auto border-b border-white/10">
                 <button
                   onClick={() => setActiveTab('Overall')}
-                  className={`px-6 py-5 text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 ${activeTab === 'Overall' ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'}`}
+                  className={`px-6 py-5 text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 ${
+                    activeTab === 'Overall' ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'
+                  }`}
                 >
-                  <img src="/icons/classes/top.png" alt="TOP" className="w-6 h-6 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                  <img
+                    src="/icons/classes/top.png"
+                    alt="TOP"
+                    className="w-6 h-6 object-contain"
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  />
                   TOP
                 </button>
                 {CLASSES.map((cls) => (
                   <button
                     key={cls.id}
                     onClick={() => setActiveTab(cls.id)}
-                    className={`px-6 py-5 text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 ${activeTab === cls.id ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'}`}
+                    className={`px-6 py-5 text-sm font-semibold whitespace-nowrap transition-all flex items-center gap-2 ${
+                      activeTab === cls.id ? 'text-orange-400 border-b-2 border-orange-400' : 'hover:text-gray-300'
+                    }`}
                   >
-                    <img src={cls.icon} alt={cls.label} className="w-5 h-5 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                    <img
+                      src={cls.icon}
+                      alt={cls.label}
+                      className="w-5 h-5 object-contain"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
                     {cls.label}
                   </button>
                 ))}
@@ -433,7 +502,10 @@ export default function Home() {
                 <div className="p-6">
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl font-black">🏆 TOP 100 игроков</h2>
-                    <button onClick={loadLeaderboard} className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm transition">
+                    <button
+                      onClick={loadLeaderboard}
+                      className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm transition"
+                    >
                       🔄 Обновить
                     </button>
                   </div>
@@ -464,7 +536,7 @@ export default function Home() {
                               {rank}
                             </div>
 
-                            {/* ✅ Аватарка в лидерборде */}
+                            {/* ✅ Аватарка */}
                             <Avatar url={entry.avatar_url} size="md" />
 
                             {/* Ник + тег + очки */}
@@ -479,11 +551,21 @@ export default function Home() {
                                 <div className="text-xs text-gray-500 mt-0.5">{entry.player_tag}</div>
                               </div>
 
+                              {/* Очки */}
                               <div className="flex items-center gap-1.5">
-                                <img src="/icons/points.png" alt="points" className="w-5 h-5 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                                <img
+                                  src="/icons/points.png"
+                                  alt="points"
+                                  className="w-5 h-5 object-contain"
+                                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                />
                                 <div>
-                                  <span className="text-orange-400 font-black text-lg leading-none">{entry.total_points}</span>
-                                  <div className="text-[10px] text-gray-500 font-medium tracking-wider uppercase">очков</div>
+                                  <span className="text-orange-400 font-black text-lg leading-none">
+                                    {entry.total_points}
+                                  </span>
+                                  <div className="text-[10px] text-gray-500 font-medium tracking-wider uppercase">
+                                    очков
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -506,7 +588,9 @@ export default function Home() {
                                 </div>
                               ))}
                               {entry.best_tiers.length > 5 && (
-                                <div className="text-xs text-gray-500 flex-shrink-0">+{entry.best_tiers.length - 5}</div>
+                                <div className="text-xs text-gray-500 flex-shrink-0">
+                                  +{entry.best_tiers.length - 5}
+                                </div>
                               )}
                             </div>
                           </div>
